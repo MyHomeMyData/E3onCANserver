@@ -1,0 +1,15 @@
+# Datapoint list for device vcal (CAN TX-ID 0x680)
+# Format: <decimal-DID> <HEX bytes...>
+# Generated from Open3Edatapoints – replace with real values.
+
+# Busidentification
+256 3b0206004700fd01c30801000300f9013001020030303030303030303030303030383135
+
+# DID 268 (0x010C) – example: flow temperature
+268 8c01c1007a027e0100
+
+# SoftwareVersion
+580 47 00 fd 01 c3 08 01 00
+
+# HardwareVersion
+581 0300f90130010200
