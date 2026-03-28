@@ -51,13 +51,39 @@ Pass the path via `--devices`.  Example (`config/devices.json`):
 {
   "vcal": {
     "tx": "0x680",
-    "dpList": "Open3Edatapoints_680.py",
-    "prop": "HPMUMASTER"
+    "dpList": "../data/Open3Edatapoints_680.py",
+    "prop": "HPMUMASTER",
+    "cyclic": {
+      "tx": "0x693",
+      "messages": [
+        { "did": 256,
+          "schedule": 17,
+          "encoder": { "fct": "raw", "_args": { "val": "" } }
+        },
+        { "did": 506,
+          "schedule": 1,
+          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
+        },
+        { "did": 954,
+          "schedule": 13,
+          "encoder": { "fct": "raw", "_args": { "val": "" } }
+        }
+      ]
+    }
   },
   "vx3": {
     "tx": "0x6a1",
-    "dpList": "Open3Edatapoints_6a1.py",
-    "prop": "EMCUMASTER"
+    "dpList": "../data/Open3Edatapoints_6a1.py",
+    "prop": "EMCUMASTER",
+    "cyclic": {
+      "tx": "0x451",
+      "messages": [
+        { "did": 506,
+          "schedule": 1,
+          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
+        }
+      ]
+    }
   }
 }
 ```
@@ -65,10 +91,13 @@ Pass the path via `--devices`.  Example (`config/devices.json`):
 | Key | Description |
 |---|---|
 | `tx` | CAN ID on which the **client** sends requests (hex string) |
-| `dpList` | Datapoint list file – path relative to the devices JSON file |
+| `dpList` | Datapoint list file – path relative to the devices py file and to datapoint values file (virtdata_xxx.txt) |
 | `prop` | Device property string (informational) |
+| `cyclic` | Specification of unsolicited, cyclically sent messages (optional) |
 
 The simulator responds on `tx + 0x10` (e.g. requests on `0x680` → responses on `0x690`).
+
+Optionally, the specified cyclic messages are sent without an external request. This is used to test the "Collect" mode (ioBroker.e3oncan and E3onCANcollect).
 
 ### Datapoint list file (Python)
 
