@@ -17,7 +17,7 @@ Handling of length of payload is different from ReadDataByIdentifier protocol (a
         * if v3 is in range B1 .. B4: Single frame, length of payload is v3-B0, payload starts @v4
         * if v3 is in range B5 .. BF: Multi frame, length of payload is v3-B0, payload starts @v4
         * if v3 equals B0:
-            + if v4 equals C1: Multi frame, length of payload is v5, payload starts @v6
+            + if v4 equals C1: Multi frame, length of payload is v5, payload starts @v6; this behaviour is observed for lenght of B5 only, yet
             + if v4 not equals C1: Multi frame, length of payload is v4, payload starts @v5
 * last frame is padded to a length of 8 bytes
 
@@ -25,8 +25,8 @@ From servers point of view:
 * Create frames similar to protocol ReadDataByIdentifier
 * length of payload is stored to v3 if it is in range 1 .. 15 with an adder of B0. Payload starts at v4. Empty payload is not supported.
 * length of payload is stored to v3, v4 and possibly v5 if it is 16 or greater, v3 is set to B0
-    * if length of payload equals c1: v4 ist set to c1, v5 is set to length of payload, payload starts at v6
-    * if length of payload not equals c1: v4 ist set to length of payload, payload starts at v5
+    * if length of payload equals C1 or B5: v4 ist set to c1, v5 is set to length of payload, payload starts at v6
+    * if length of payload not equals C1: v4 ist set to length of payload, payload starts at v5
 
 Typical sequences are:
 

@@ -9,11 +9,11 @@ Each SimulatedDevice:
      c. Hands complete UDS payloads to the protocol handler.
      d. Segments and transmits the response via ISO-TP on the response CAN-ID
         (tx_id + 0x10).
+  3. Optionally runs a CyclicTask that sends unsolicited collect-protocol
+     messages at configured intervals (separate CAN-ID, separate protocol).
 
-Extension points (not yet implemented)
----------------------------------------
-* Cyclic TX: a separate task per device can emit unsolicited frames on a
-  different CAN-ID using a different protocol.  Activated via device config.
+Extension points
+----------------
 * Dynamic value injection: the DatapointStore's resolver API lets external
   code register callables per DID before the device starts.
 * Multiple protocol handlers: the device could route requests to different
@@ -30,6 +30,7 @@ from typing import Optional, Type
 import can
 
 from simulator.bus import CANBus
+from simulator.cyclic import CyclicTask
 from simulator.datastore import DatapointStore
 from simulator.protocol.base import ProtocolHandler
 from simulator.protocol.isotp import ISOTPAssembler, segment
@@ -52,12 +53,17 @@ class SimulatedDevice:
     tx_id :
         CAN arbitration ID on which the *client* sends requests to this device.
     dp_list_path :
-        Path to the datapoint list text file (dpList).
+        Path to the datapoint list file (dpList, currently informational).
+    dp_values_path :
+        Path to the datapoint values text file (virtdata_xxx.txt).
     bus :
         Shared CANBus instance.
     protocol_class :
         Protocol handler class to instantiate for this device.
         Defaults to UDSHandler.
+    cyclic_task :
+        Optional CyclicTask for unsolicited broadcast messages on a separate
+        CAN-ID using the collect protocol.  Pass None (default) to disable.
     """
 
     def __init__(
@@ -68,6 +74,7 @@ class SimulatedDevice:
         dp_values_path: Path,
         bus: CANBus,
         protocol_class: Type[ProtocolHandler] = UDSHandler,
+        cyclic_task: Optional[CyclicTask] = None,
     ) -> None:
         self.name = name
         self.tx_id = tx_id
@@ -78,6 +85,7 @@ class SimulatedDevice:
         self._assembler = ISOTPAssembler()
         self._rx_queue: asyncio.Queue[can.Message] = asyncio.Queue()
         self._task: Optional[asyncio.Task] = None
+        self._cyclic_task: Optional[CyclicTask] = cyclic_task
 
     # ------------------------------------------------------------------
     # Public API
@@ -96,11 +104,15 @@ class SimulatedDevice:
         )
 
     async def start(self) -> None:
-        """Launch the device's asyncio processing task."""
+        """Launch the device's asyncio processing task and optional cyclic TX."""
         self._task = asyncio.create_task(self._run(), name=f"device-{self.name}")
+        if self._cyclic_task is not None:
+            await self._cyclic_task.start()
 
     async def stop(self) -> None:
-        """Cancel the device task and wait for it to finish."""
+        """Cancel the device task (and cyclic task) and wait for them to finish."""
+        if self._cyclic_task is not None:
+            await self._cyclic_task.stop()
         if self._task:
             self._task.cancel()
             try:
