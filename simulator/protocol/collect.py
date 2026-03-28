@@ -21,7 +21,7 @@ First-frame layout (v0 = 0x21):
 
 Length encoding (v3):
   0xB1..0xBF  payload length = v3 - 0xB0  (1..15 bytes); payload starts at v4
-  0xB0        length ≥ 16 or == 0xC1:
+  0xB0        length ≥ 16 or in escape list (0xB5, 0xC1):
                 if v4 == 0xC1: payload length = v5; payload starts at v6
                 else:          payload length = v4; payload starts at v5
 
@@ -128,7 +128,7 @@ def segment_collect(did: int, payload: bytes) -> List[bytes]:
     else:
         # v3 = B0; extended length field
         if length in _LEN_ESCAPE_LIST:
-            # Special case: length 0xC1 would be ambiguous, so add extra byte.
+            # Special cases: lengths 0xB5 and 0xC1 require escape encoding (observed in real devices).
             # v3=B0, v4=C1, v5=length, payload starts at v6 → 2 bytes remain
             header = bytes([_LEN_BASE, _LEN_ESCAPE, length])
             first_chunk_size = 2   # v6..v7
