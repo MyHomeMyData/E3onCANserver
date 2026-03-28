@@ -3,16 +3,16 @@
     "tx": "0x680",
     "dpList": "../data/Open3Edatapoints_680.py",
     "prop": "HPMUMASTER",
-    "collect": {
+    "cyclic": {
       "tx": "0x693",
       "messages": [
         { "did": 256,
-          "schedule": 10,
-          "encoder": { "fct": "raw", "_args": {} }
+          "schedule": 15,
+          "encoder": { "fct": "raw", "_args": { "val": "" } }
         },
         { "did": 506,
           "schedule": 1,
-          "encoder": { "fct": "time", "_args": { "len": 3, "format": "hhmmss" } }
+          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
         }
       ]
     }
