@@ -32,7 +32,7 @@ Bytes 3–7: 0x00 (padding)
 
 Consecutive Frame layout
 ------------------------
-Byte 0:  0x2n  (n = sequence number 0–15, wraps)
+Byte 0:  0x2n  (n = sequence number 1–15, then wraps to 0)
 Bytes 1–7: up to 7 bytes of payload
 
 Limitations / known omissions in v0.1
@@ -225,7 +225,7 @@ class ISOTPAssembler:
         remaining = self._expected_length - len(self._buffer)
         chunk = data[1:1 + min(7, remaining)]
         self._buffer.extend(chunk)
-        self._next_seq = (self._next_seq % 15) + 1
+        self._next_seq = (self._next_seq + 1) % 16  # wraps 0–15
 
         if len(self._buffer) >= self._expected_length:
             payload = bytes(self._buffer[:self._expected_length])

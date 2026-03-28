@@ -8,6 +8,10 @@
 # DID 268 (0x010C) – example: flow temperature
 268 8c01c1007a027e0100
 
+# Date and time
+505 120b17
+506 12061e
+
 # SoftwareVersion
 580 47 00 fd 01 c3 08 01 00
 

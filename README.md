@@ -1,3 +1,4 @@
+![Logo](admin/e3oncan_small.png)
 # E3onCANserver
 
 A simulator of Viessmann E3-series devices (Vitocal, Vitodens, VX3/Vitocharge) on CAN-bus.
@@ -9,7 +10,7 @@ in parallel, each on its own CAN arbitration ID.
 
 ## Status
 
-**v0.1 – initial implementation**
+**v0.2 – added cyclic unsolicited messages**
 
 | Feature | Status |
 |---|---|
@@ -19,8 +20,8 @@ in parallel, each on its own CAN arbitration ID.
 | ISO-TP Multi-Frame (FF/CF/FC) | ✅ |
 | Multiple parallel devices | ✅ |
 | Dynamic value generation | 🔜 planned |
-| Cyclic unsolicited TX | 🔜 planned |
-| Additional protocols | 🔜 planned |
+| Cyclic unsolicited TX | ✅ |
+| Additional protocols | ✅ |
 
 ## Requirements
 
@@ -50,13 +51,39 @@ Pass the path via `--devices`.  Example (`config/devices.json`):
 {
   "vcal": {
     "tx": "0x680",
-    "dpList": "Open3Edatapoints_680.py",
-    "prop": "HPMUMASTER"
+    "dpList": "../data/Open3Edatapoints_680.py",
+    "prop": "HPMUMASTER",
+    "cyclic": {
+      "tx": "0x693",
+      "messages": [
+        { "did": 256,
+          "schedule": 17,
+          "encoder": { "fct": "raw", "_args": { "val": "" } }
+        },
+        { "did": 506,
+          "schedule": 1,
+          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
+        },
+        { "did": 954,
+          "schedule": 13,
+          "encoder": { "fct": "raw", "_args": { "val": "" } }
+        }
+      ]
+    }
   },
   "vx3": {
     "tx": "0x6a1",
-    "dpList": "Open3Edatapoints_6a1.py",
-    "prop": "EMCUMASTER"
+    "dpList": "../data/Open3Edatapoints_6a1.py",
+    "prop": "EMCUMASTER",
+    "cyclic": {
+      "tx": "0x451",
+      "messages": [
+        { "did": 506,
+          "schedule": 1,
+          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
+        }
+      ]
+    }
   }
 }
 ```
@@ -64,10 +91,13 @@ Pass the path via `--devices`.  Example (`config/devices.json`):
 | Key | Description |
 |---|---|
 | `tx` | CAN ID on which the **client** sends requests (hex string) |
-| `dpList` | Datapoint list file – path relative to the devices JSON file |
+| `dpList` | Datapoint list file – path relative to the devices py file and to datapoint values file (virtdata_xxx.txt) |
 | `prop` | Device property string (informational) |
+| `cyclic` | Specification of unsolicited, cyclically sent messages (optional) |
 
 The simulator responds on `tx + 0x10` (e.g. requests on `0x680` → responses on `0x690`).
+
+Optionally, the specified cyclic messages are sent without an external request. This is used to test the "Collect" mode (ioBroker.e3oncan and E3onCANcollect).
 
 ### Datapoint list file (Python)
 
@@ -128,20 +158,26 @@ pytest tests/ -v
 ## Project structure
 
 ```
-viessmann-e3-sim/
+E3onCANserver/
 ├── simulator/
 │   ├── bus.py              # Async python-can wrapper (shared bus, RX dispatch)
+│   ├── cyclic.py           # Unsolicited broadcast scheduler for one device
 │   ├── datastore.py        # Per-device datapoint storage (dict + resolver API)
 │   ├── device.py           # SimulatedDevice: asyncio task, ISO-TP ↔ UDS glue
 │   └── protocol/
 │       ├── base.py         # Abstract ProtocolHandler base class
+│       ├── collect.py      # Segmentation for the Viessmann E3 "collect" protocol
+│       ├── encoders.py     # Encoder classes for cyclic (unsolicited) CAN messages
 │       ├── isotp.py        # ISO 15765-2 segmentation & reassembly
 │       └── uds.py          # UDS services 0x22 / 0x2E
 ├── config/
 │   └── devices.json        # Example device configuration
 ├── data/
 │   └── Open3Edatapoints_680.txt   # Example datapoint values
+├── docs/
+│   └── protocol.md         # Description of Viessmann specific protocol used as "Collect" by clients
 ├── tests/
+│   ├── test_collect.py
 │   ├── test_datastore.py
 │   ├── test_isotp.py
 │   └── test_uds.py
@@ -155,10 +191,10 @@ viessmann-e3-sim/
 The simulator uses the address range `0x680`–`0x6EF` for client requests.
 Responses are sent on `request_id + 0x10`:
 
-| Device | Request ID | Response ID |
-|---|---|---|
-| vcal (HPMUMASTER) | 0x680 | 0x690 |
-| vx3  (EMCUMASTER) | 0x6A1 | 0x6B1 |
+| Device | Request ID | Response ID | Unsolicited ID |
+|---|---|---|---|
+| vcal (HPMUMASTER) | 0x680 | 0x690 | 0x693 |
+| vx3  (EMCUMASTER) | 0x6A1 | 0x6B1 | 0x451 |
 
 ## Extending the simulator
 
@@ -191,6 +227,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+
+### 0.2.0 (2026-03-28)
+* (MyHomeMyData) Added cyclic unsolicited messages
 
 ### 0.1.0 (2026-03-27)
 * (MyHomeMyData) Initial version. Created using Claude code.
