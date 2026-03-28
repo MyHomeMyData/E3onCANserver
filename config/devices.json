@@ -2,7 +2,20 @@
   "vcal": {
     "tx": "0x680",
     "dpList": "../data/Open3Edatapoints_680.py",
-    "prop": "HPMUMASTER"
+    "prop": "HPMUMASTER",
+    "collect": {
+      "tx": "0x693",
+      "messages": [
+        { "did": 256,
+          "schedule": 10,
+          "encoder": { "fct": "raw", "_args": {} }
+        },
+        { "did": 506,
+          "schedule": 1,
+          "encoder": { "fct": "time", "_args": { "len": 3, "format": "hhmmss" } }
+        }
+      ]
+    }
   },
   "vx3": {
     "tx": "0x6a1",
