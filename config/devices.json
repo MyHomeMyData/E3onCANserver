@@ -2,37 +2,11 @@
   "vcal": {
     "tx": "0x680",
     "dpList": "../data/Open3Edatapoints_680.py",
-    "prop": "HPMUMASTER",
-    "cyclic": {
-      "tx": "0x693",
-      "messages": [
-        { "did": 256,
-          "schedule": 17,
-          "encoder": { "fct": "raw", "_args": { "val": "" } }
-        },
-        { "did": 506,
-          "schedule": 1,
-          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
-        },
-        { "did": 954,
-          "schedule": 13,
-          "encoder": { "fct": "raw", "_args": { "val": "" } }
-        }
-      ]
-    }
+    "prop": "HPMUMASTER"
   },
   "vx3": {
     "tx": "0x6a1",
     "dpList": "../data/Open3Edatapoints_6a1.py",
-    "prop": "EMCUMASTER",
-    "cyclic": {
-      "tx": "0x451",
-      "messages": [
-        { "did": 506,
-          "schedule": 1,
-          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
-        }
-      ]
-    }
+    "prop": "EMCUMASTER"
   }
 }

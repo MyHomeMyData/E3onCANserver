@@ -7,10 +7,10 @@ Each SimulatedDevice:
      a. Receives frames from the bus (via an asyncio.Queue fed by the RX callback).
      b. Passes them through the ISO-TP assembler.
      c. Hands complete UDS payloads to the protocol handler.
-     d. Segments and transmits the response via ISO-TP on the response CAN-ID
-        (tx_id + 0x10).
-  3. Optionally runs a CyclicTask that sends unsolicited collect-protocol
-     messages at configured intervals (separate CAN-ID, separate protocol).
+     d. Passes the **complete** ISO-TP frame list to FaultInjector.send_frames(),
+        which handles delay, fault injection, and the FC handshake internally.
+  3. Optionally runs a CyclicTask for unsolicited collect-protocol messages
+     (separate CAN-ID, no fault injection).
 
 Extension points
 ----------------
@@ -32,13 +32,13 @@ import can
 from simulator.bus import CANBus
 from simulator.cyclic import CyclicTask
 from simulator.datastore import DatapointStore
+from simulator.faults import FaultConfig, FaultInjector
 from simulator.protocol.base import ProtocolHandler
 from simulator.protocol.isotp import ISOTPAssembler, segment
 from simulator.protocol.uds import UDSHandler
 
 logger = logging.getLogger(__name__)
 
-# The response CAN-ID is always the request CAN-ID + this offset.
 RESPONSE_ID_OFFSET = 0x10
 
 
@@ -60,10 +60,10 @@ class SimulatedDevice:
         Shared CANBus instance.
     protocol_class :
         Protocol handler class to instantiate for this device.
-        Defaults to UDSHandler.
     cyclic_task :
-        Optional CyclicTask for unsolicited broadcast messages on a separate
-        CAN-ID using the collect protocol.  Pass None (default) to disable.
+        Optional CyclicTask for unsolicited broadcast messages.
+    fault_config :
+        Delay and error-injection settings.  Defaults to no delay, no errors.
     """
 
     def __init__(
@@ -75,10 +75,11 @@ class SimulatedDevice:
         bus: CANBus,
         protocol_class: Type[ProtocolHandler] = UDSHandler,
         cyclic_task: Optional[CyclicTask] = None,
+        fault_config: Optional[FaultConfig] = None,
     ) -> None:
         self.name = name
         self.tx_id = tx_id
-        self.rx_id = tx_id + RESPONSE_ID_OFFSET  # we *send* on this ID
+        self.rx_id = tx_id + RESPONSE_ID_OFFSET
         self._bus = bus
         self._store = DatapointStore.from_file(dp_values_path)
         self._handler: ProtocolHandler = protocol_class()
@@ -86,31 +87,28 @@ class SimulatedDevice:
         self._rx_queue: asyncio.Queue[can.Message] = asyncio.Queue()
         self._task: Optional[asyncio.Task] = None
         self._cyclic_task: Optional[CyclicTask] = cyclic_task
+        self._fault_config = fault_config or FaultConfig()
+        self._injector = FaultInjector(self._fault_config, name)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def register(self) -> None:
-        """
-        Register this device's RX callback with the shared bus.
-
-        Must be called before ``start()``.
-        """
         self._bus.register_rx(self.tx_id, self._on_frame_received)
         logger.info(
-            "[%s] registered – listening on 0x%03X, responding on 0x%03X",
+            "[%s] registered – listening on 0x%03X, responding on 0x%03X"
+            " (delay=%dms, errors=%.1f%%)",
             self.name, self.tx_id, self.rx_id,
+            self._fault_config.delay_ms, self._fault_config.error_pct,
         )
 
     async def start(self) -> None:
-        """Launch the device's asyncio processing task and optional cyclic TX."""
         self._task = asyncio.create_task(self._run(), name=f"device-{self.name}")
         if self._cyclic_task is not None:
             await self._cyclic_task.start()
 
     async def stop(self) -> None:
-        """Cancel the device task (and cyclic task) and wait for them to finish."""
         if self._cyclic_task is not None:
             await self._cyclic_task.stop()
         if self._task:
@@ -122,7 +120,6 @@ class SimulatedDevice:
 
     @property
     def datastore(self) -> DatapointStore:
-        """Expose the DatapointStore for external access (e.g. dynamic resolvers)."""
         return self._store
 
     # ------------------------------------------------------------------
@@ -130,20 +127,9 @@ class SimulatedDevice:
     # ------------------------------------------------------------------
 
     def _on_frame_received(self, msg: can.Message) -> None:
-        """
-        CAN RX callback – called by CANBus from the event loop thread.
-
-        Puts the frame into an asyncio queue for consumption by ``_run()``.
-        """
         self._rx_queue.put_nowait(msg)
 
     async def _run(self) -> None:
-        """
-        Main processing loop for this device.
-
-        Waits for incoming CAN frames, reassembles ISO-TP messages, invokes
-        the protocol handler, and transmits the ISO-TP segmented response.
-        """
         logger.debug("[%s] task started", self.name)
         try:
             while True:
@@ -154,21 +140,18 @@ class SimulatedDevice:
             raise
 
     async def _process_frame(self, msg: can.Message) -> None:
-        """Process a single incoming CAN frame through ISO-TP and the protocol handler."""
         data = bytes(msg.data)
         payload, fc_frame = self._assembler.feed(data)
 
-        # If the assembler needs us to send a Flow Control frame, do it now.
         if fc_frame is not None:
             logger.debug("[%s] sending FC", self.name)
             await self._bus.send(self.rx_id, fc_frame)
 
-        # If we have a complete payload, hand it to the protocol handler.
         if payload is not None:
             await self._handle_payload(payload)
 
     async def _handle_payload(self, payload: bytes) -> None:
-        """Invoke the protocol handler and transmit the segmented response."""
+        """Invoke the protocol handler and send the complete (possibly faulted) response."""
         logger.debug(
             "[%s] dispatching payload to %s: %s",
             self.name, self._handler.name, payload.hex(" "),
@@ -179,27 +162,16 @@ class SimulatedDevice:
             logger.debug("[%s] handler returned no response", self.name)
             return
 
+        # Pass the complete frame list to FaultInjector. For MF responses,
+        # send_fn is the bus send, and wait_for_fc handles the FC handshake.
         frames = segment(response)
-
-        if len(frames) == 1:
-            # Single Frame – send immediately.
-            await self._bus.send(self.rx_id, frames[0])
-        else:
-            # Multi-frame: send FF, wait for FC from client, then send CFs.
-            await self._bus.send(self.rx_id, frames[0])  # First Frame
-            fc = await self._wait_for_flow_control()
-            if fc is None:
-                logger.warning("[%s] no Flow Control received, aborting TX", self.name)
-                return
-            for cf in frames[1:]:
-                await self._bus.send(self.rx_id, cf)
+        await self._injector.send_frames(
+            frames,
+            send_fn=lambda f: self._bus.send(self.rx_id, f),
+            wait_for_fc=self._wait_for_flow_control if len(frames) > 1 else None,
+        )
 
     async def _wait_for_flow_control(self, timeout: float = 1.0) -> Optional[bytes]:
-        """
-        Wait for a Flow Control frame from the client after sending a First Frame.
-
-        Returns the raw FC data bytes, or None on timeout.
-        """
         try:
             msg = await asyncio.wait_for(self._rx_queue.get(), timeout=timeout)
             data = bytes(msg.data)
