@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 SID_SERVICE77         = 0x77
-S77_CONFIRM_BYTE      = 0x04   # fixed second byte of every positive response
+S77_CONFIRM_BYTE      = 0x44   # fixed last byte of every positive response
 S77_REQUEST_ID_OFFSET = 0x02   # request CAN-ID  = device tx_id + 0x02
 S77_RESPONSE_ID_OFFSET = 0x12  # response CAN-ID = device tx_id + 0x12
                                 # (= request + standard UDS offset 0x10)
@@ -145,4 +145,4 @@ class Service77Handler(ProtocolHandler):
         logger.debug(
             "[Service77] DID 0x%04X ← %s", did, data.hex(" ")
         )
-        return bytes([SID_SERVICE77, S77_CONFIRM_BYTE, payload[1], payload[2]])
+        return bytes([SID_SERVICE77, payload[1], payload[2], S77_CONFIRM_BYTE])
