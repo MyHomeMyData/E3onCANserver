@@ -15,6 +15,7 @@ The devices JSON file must follow this schema::
         "tx": "0x680",
         "dpList": "../data/Open3Edatapoints_680.py",
         "prop": "HPMUMASTER",
+        "service77": [ .. ],  // optional, list of dids rejected by standard writeDataByIdentifier protocol
         "delay": 20,          // optional, ms, overrides --delay
         "errors": 10.0,       // optional, %, overrides --errors
         "cyclic": { ... }     // optional
@@ -23,11 +24,12 @@ The devices JSON file must follow this schema::
 
 Keys (UDS/request side)
 ------------------------
-tx      : CAN arbitration ID (hex string) on which the client sends requests.
-dpList  : Path to the datapoint list file (relative to the devices.json file).
-prop    : Device property string (informational).
-delay   : Inter-frame delay in ms for this device (0–200). Overrides --delay.
-errors  : Error injection rate in % for this device (0–20). Overrides --errors.
+tx        : CAN arbitration ID (hex string) on which the client sends requests.
+dpList    : Path to the datapoint list file (relative to the devices.json file).
+prop      : Device property string (informational).
+service77 : A write request targeting any of these DIDs via service 2E returns NRC 0x22 (conditionsNotCorrect)
+delay     : Inter-frame delay in ms for this device (0–200). Overrides --delay.
+errors    : Error injection rate in % for this device (0–20). Overrides --errors.
 
 Keys (cyclic/broadcast side, optional)
 ----------------------------------------
@@ -59,7 +61,7 @@ from simulator.faults import DELAY_MAX_MS, ERROR_PCT_MAX, FaultConfig
 from simulator.protocol.encoders import Encoder
 from simulator.protocol.uds import UDSHandler
 
-pgm_ver_str = 'V0.3.0 (2026-03-29)'
+pgm_ver_str = 'V0.4.0 (2026-03-30)'
 
 
 def parse_args() -> argparse.Namespace:
@@ -189,6 +191,16 @@ def load_devices(
             cli_error_pct=cli_error_pct,
         )
 
+        # Service 77 protection list: DIDs that normal WriteDataByIdentifier
+        # must reject with NRC 0x22.  Service 77 accepts them regardless.
+        s77_raw = entry.get("service77", [])
+        service77_dids = frozenset(int(d) for d in s77_raw)
+        if service77_dids:
+            logging.debug(
+                "[%s] Service-77-protected DIDs: %s",
+                name, sorted(service77_dids),
+            )
+
         protocol_class = UDSHandler  # extension point
 
         device = SimulatedDevice(
@@ -200,6 +212,7 @@ def load_devices(
             protocol_class=protocol_class,
             cyclic_task=None,
             fault_config=fault_config,
+            service77_dids=service77_dids,
         )
 
         if "cyclic" in entry:
@@ -217,10 +230,12 @@ def load_devices(
         device.register()
         devices.append(device)
         logging.info(
-            "Loaded device %r (tx=0x%03X, delay=%dms, errors=%.1f%%, cyclic=%s)",
+            "Loaded device %r (tx=0x%03X, delay=%dms, errors=%.1f%%,"
+            " cyclic=%s, s77_protected=%d DID(s))",
             name, tx_id,
             fault_config.delay_ms, fault_config.error_pct,
             "yes" if device._cyclic_task else "no",
+            len(service77_dids),
         )
 
     return devices

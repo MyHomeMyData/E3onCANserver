@@ -1,0 +1,13 @@
+{
+  "vcal": {
+    "tx": "0x680",
+    "dpList": "../data/Open3Edatapoints_680.py",
+    "prop": "HPMUMASTER",
+     "service77": [1100, 1101]
+ },
+  "vx3": {
+    "tx": "0x6a1",
+    "dpList": "../data/Open3Edatapoints_6a1.py",
+    "prop": "EMCUMASTER"
+  }
+}
