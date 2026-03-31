@@ -34,7 +34,11 @@ errors    : Error injection rate in % for this device (0–20). Overrides --erro
 Keys (cyclic/broadcast side, optional)
 ----------------------------------------
 cyclic.tx       : CAN-ID on which unsolicited collect messages are broadcast.
-cyclic.messages : List of message descriptors (did, schedule, encoder).
+cyclic.messages : List of message descriptors:
+    did      : Data identifier (decimal integer).
+    schedule : Broadcast interval in seconds.
+    encoder  : { "fct": "<name>", "_args": { ... } }
+               Supported fct values: "raw", "localtime".
 
 Extension notes
 ---------------
@@ -60,8 +64,9 @@ from simulator.device import SimulatedDevice
 from simulator.faults import DELAY_MAX_MS, ERROR_PCT_MAX, FaultConfig
 from simulator.protocol.encoders import Encoder
 from simulator.protocol.uds import UDSHandler
+from simulator.doip import DoIPServer, DEFAULT_HOST, DEFAULT_PORT
 
-pgm_ver_str = 'V0.4.0 (2026-03-30)'
+pgm_ver_str = 'V0.5.0 (2026-03-31)'
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +92,19 @@ def parse_args() -> argparse.Namespace:
         default="vcan0",
         metavar="CHAN",
         help="CAN channel / device name",
+    )
+    parser.add_argument(
+        "--doip",
+        nargs='?',                                      # 0 oder 1 value(s) allowed
+        const=f"{DEFAULT_HOST}:{DEFAULT_PORT}",         # value, for --doip
+        default=None,                                   # value, w/o --doip option
+        metavar="HOST:PORT",
+        help=(
+            "Run in DoIP mode instead of CAN. "
+            "Defaults to 127.0.0.1:13400. Optionally accepts a host (e.g. 127.0.0.1) "
+            "or port number (e.g. 13400) or host:port (e.g. 0.0.0.0:13400). "
+            "When set, --interface and --channel are ignored."
+        ),
     )
     parser.add_argument(
         "--delay",
@@ -117,9 +135,23 @@ def _build_cyclic_task(
     device_name: str,
     cyclic_cfg: dict,
     bus: CANBus,
-    store,
+    store,               # DatapointStore – imported lazily to avoid circular
 ) -> Optional[CyclicTask]:
-    """Parse the 'cyclic' block and return a CyclicTask, or None."""
+    """
+    Parse the ``"cyclic"`` block of a device config entry and return a
+    CyclicTask, or None if the block is absent or has no messages.
+
+    Parameters
+    ----------
+    device_name :
+        Used in log messages.
+    cyclic_cfg :
+        The dict from ``entry["cyclic"]``.
+    bus :
+        Shared CANBus.
+    store :
+        DatapointStore of the device (passed to encoders at runtime).
+    """
     tx_id = int(cyclic_cfg["tx"], 16)
     raw_messages: list = cyclic_cfg.get("messages", [])
     if not raw_messages:
@@ -201,8 +233,11 @@ def load_devices(
                 name, sorted(service77_dids),
             )
 
-        protocol_class = UDSHandler  # extension point
+        # Extension point: read entry.get("protocol", "uds") here and
+        # select the appropriate ProtocolHandler class.
+        protocol_class = UDSHandler
 
+        # Build device first (creates the DatapointStore).
         device = SimulatedDevice(
             name=name,
             tx_id=tx_id,
@@ -215,6 +250,7 @@ def load_devices(
             service77_dids=service77_dids,
         )
 
+        # Attach cyclic task if configured.
         if "cyclic" in entry:
             try:
                 cyclic = _build_cyclic_task(
@@ -241,12 +277,57 @@ def load_devices(
     return devices
 
 
+
+def _parse_doip_address(spec: str) -> tuple[str, int]:
+    """
+    Parse a DoIP address spec of the form ``[HOST:PORT]``.
+
+    Examples::
+
+        ""               → ("127.0.0.1", 13400)
+        "0.0.0.0"        → ("0.0.0.0", 13400)
+        "13400"          → ("127.0.0.1", 13400)
+        "0.0.0.0:13400"  → ("0.0.0.0", 13400)
+    """
+    if spec == None or spec == "":
+        return DEFAULT_HOST, int(DEFAULT_PORT)
+    if ":" in spec:
+        host, port_str = spec.rsplit(":", 1)
+        return host, int(port_str)
+    if "." in spec:
+        return spec, int(DEFAULT_PORT)
+    return DEFAULT_HOST, int(spec)
+
+
+async def _wait_for_signal() -> None:
+    """Block until SIGINT or SIGTERM is received."""
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _handler() -> None:
+        logging.info("Shutdown signal received")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _handler)
+
+    await stop_event.wait()
+
+
 async def run(args: argparse.Namespace) -> None:
-    """Main coroutine: start bus + devices and wait for SIGINT/SIGTERM."""
+    """Main coroutine: dispatch to CAN or DoIP mode."""
     devices_file = Path(args.devices).resolve()
     if not devices_file.is_file():
         raise FileNotFoundError(f"Devices file not found: {devices_file}")
 
+    if args.doip is not None:
+        await _run_doip(args, devices_file)
+    else:
+        await _run_can(args, devices_file)
+
+
+async def _run_can(args: argparse.Namespace, devices_file: Path) -> None:
+    """Start simulator in CAN mode (original behaviour)."""
     bus = CANBus(interface=args.interface, channel=args.channel)
     devices = load_devices(
         devices_file, bus,
@@ -262,23 +343,47 @@ async def run(args: argparse.Namespace) -> None:
         "Simulator running – %d device(s) active. Press Ctrl-C to stop.",
         len(devices),
     )
-
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-
-    def _signal_handler() -> None:
-        logging.info("Shutdown signal received")
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _signal_handler)
-
-    await stop_event.wait()
+    await _wait_for_signal()
 
     logging.info("Shutting down…")
     for device in devices:
         await device.stop()
     await bus.stop()
+    logging.info("Bye.")
+
+
+async def _run_doip(args: argparse.Namespace, devices_file: Path) -> None:
+    """
+    Start simulator in DoIP mode.
+
+    No CAN bus is opened.  A dummy CANBus object is passed to load_devices()
+    solely so that SimulatedDevice can be instantiated (it stores a bus
+    reference for potential future use).  The bus is never started.
+
+    Cyclic TX (Collect) is skipped in DoIP mode because it requires an active
+    CAN bus.
+    """
+    host, port = _parse_doip_address(args.doip)
+
+    dummy_bus = CANBus(interface="virtual", channel="vcan0")
+    devices = load_devices(
+        devices_file, dummy_bus,
+        cli_delay_ms=args.delay,
+        cli_error_pct=args.errors,
+    )
+
+    device_map = {d.tx_id: d for d in devices}
+    doip_server = DoIPServer(device_map, host=host, port=port)
+    await doip_server.start()
+
+    logging.info(
+        "DoIP mode – %d device(s) available at %s:%d. Press Ctrl-C to stop.",
+        len(devices), host, port,
+    )
+    await _wait_for_signal()
+
+    logging.info("Shutting down…")
+    await doip_server.stop()
     logging.info("Bye.")
 
 
