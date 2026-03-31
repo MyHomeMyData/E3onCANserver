@@ -80,9 +80,9 @@ class TestService77Handler:
         req = bytes([0x77, 0x01, 0x00, 0xAB, 0xCD])
         resp = h.handle(req, s)
         assert resp[0] == SID_SERVICE77
-        assert resp[1] == S77_CONFIRM_BYTE
-        assert resp[2] == 0x01   # DID_HI
-        assert resp[3] == 0x00   # DID_LO
+        assert resp[1] == 0x01   # DID_HI
+        assert resp[2] == 0x00   # DID_LO
+        assert resp[3] == S77_CONFIRM_BYTE
 
     def test_positive_response_length(self):
         h = Service77Handler()
@@ -135,7 +135,7 @@ class TestService77Handler:
         resp = h.handle(req, s)
         # Service77Handler doesn't know about the protection list at all
         assert resp[0] == SID_SERVICE77
-        assert resp[1] == S77_CONFIRM_BYTE
+        assert resp[3] == S77_CONFIRM_BYTE
         assert s.read(256) == bytes([0xBE, 0xEF])
 
 
