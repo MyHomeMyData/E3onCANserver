@@ -3,7 +3,10 @@ main.py – Entry point for the Viessmann E3 CAN-bus simulator.
 
 Usage
 -----
-    python main.py --devices config/devices.json [--interface socketcan] [--channel vcan0] [--log-level DEBUG]
+    python main.py --devices config/devices.json \\
+                   [--interface socketcan] [--channel vcan0] \\
+                   [--delay 50] [--errors 5.0] \\
+                   [--log-level DEBUG]
 
 The devices JSON file must follow this schema::
 
@@ -12,38 +15,26 @@ The devices JSON file must follow this schema::
         "tx": "0x680",
         "dpList": "../data/Open3Edatapoints_680.py",
         "prop": "HPMUMASTER",
-        "cyclic": {
-          "tx": "0x693",
-          "messages": [
-            { "did": 256,
-              "schedule": 15,
-              "encoder": { "fct": "raw", "_args": { "val": "" } }
-            },
-            { "did": 506,
-              "schedule": 1,
-              "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
-            }
-          ]
-        }
+        "service77": [ .. ],  // optional, list of dids rejected by standard writeDataByIdentifier protocol
+        "delay": 20,          // optional, ms, overrides --delay
+        "errors": 10.0,       // optional, %, overrides --errors
+        "cyclic": { ... }     // optional
       }
     }
 
 Keys (UDS/request side)
 ------------------------
-tx      : CAN arbitration ID (hex string) on which the client sends requests.
-dpList  : Path to the datapoint list file (relative to the devices.json file).
-          Implicit rule: the values file is named virtdata_<hex_addr>.txt in
-          the same directory.
-prop    : Device property string (informational).
+tx        : CAN arbitration ID (hex string) on which the client sends requests.
+dpList    : Path to the datapoint list file (relative to the devices.json file).
+prop      : Device property string (informational).
+service77 : A write request targeting any of these DIDs via service 2E returns NRC 0x22 (conditionsNotCorrect)
+delay     : Inter-frame delay in ms for this device (0–200). Overrides --delay.
+errors    : Error injection rate in % for this device (0–20). Overrides --errors.
 
 Keys (cyclic/broadcast side, optional)
 ----------------------------------------
 cyclic.tx       : CAN-ID on which unsolicited collect messages are broadcast.
-cyclic.messages : List of message descriptors:
-    did      : Data identifier (decimal integer).
-    schedule : Broadcast interval in seconds.
-    encoder  : { "fct": "<name>", "_args": { ... } }
-               Supported fct values: "raw", "localtime".
+cyclic.messages : List of message descriptors (did, schedule, encoder).
 
 Extension notes
 ---------------
@@ -66,10 +57,11 @@ from typing import List, Optional
 from simulator.bus import CANBus
 from simulator.cyclic import CyclicMessage, CyclicTask
 from simulator.device import SimulatedDevice
+from simulator.faults import DELAY_MAX_MS, ERROR_PCT_MAX, FaultConfig
 from simulator.protocol.encoders import Encoder
 from simulator.protocol.uds import UDSHandler
 
-pgm_ver_str = 'V0.2.0 (2026-03-28)'
+pgm_ver_str = 'V0.4.0 (2026-03-30)'
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,6 +89,22 @@ def parse_args() -> argparse.Namespace:
         help="CAN channel / device name",
     )
     parser.add_argument(
+        "--delay",
+        type=int,
+        default=0,
+        metavar="MS",
+        help=f"Inter-frame delay in ms for all devices (0–{DELAY_MAX_MS}). "
+             f"Overridden per device by 'delay' in devices.json.",
+    )
+    parser.add_argument(
+        "--errors",
+        type=float,
+        default=0.0,
+        metavar="PCT",
+        help=f"Error injection rate in %% for all devices (0–{ERROR_PCT_MAX}). "
+             f"Overridden per device by 'errors' in devices.json.",
+    )
+    parser.add_argument(
         "--log-level", "-l",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -109,23 +117,9 @@ def _build_cyclic_task(
     device_name: str,
     cyclic_cfg: dict,
     bus: CANBus,
-    store,               # DatapointStore – imported lazily to avoid circular
+    store,
 ) -> Optional[CyclicTask]:
-    """
-    Parse the ``"cyclic"`` block of a device config entry and return a
-    CyclicTask, or None if the block is absent or has no messages.
-
-    Parameters
-    ----------
-    device_name :
-        Used in log messages.
-    cyclic_cfg :
-        The dict from ``entry["cyclic"]``.
-    bus :
-        Shared CANBus.
-    store :
-        DatapointStore of the device (passed to encoders at runtime).
-    """
+    """Parse the 'cyclic' block and return a CyclicTask, or None."""
     tx_id = int(cyclic_cfg["tx"], 16)
     raw_messages: list = cyclic_cfg.get("messages", [])
     if not raw_messages:
@@ -155,7 +149,12 @@ def _build_cyclic_task(
     )
 
 
-def load_devices(devices_file: Path, bus: CANBus) -> List[SimulatedDevice]:
+def load_devices(
+    devices_file: Path,
+    bus: CANBus,
+    cli_delay_ms: int,
+    cli_error_pct: float,
+) -> List[SimulatedDevice]:
     """
     Parse the devices JSON file and instantiate SimulatedDevice objects.
 
@@ -164,12 +163,11 @@ def load_devices(devices_file: Path, bus: CANBus) -> List[SimulatedDevice]:
     devices_file :
         Path to the JSON file.
     bus :
-        Shared CANBus instance (passed to each device).
-
-    Returns
-    -------
-    list[SimulatedDevice]
-        One device per entry in the JSON file.
+        Shared CANBus instance.
+    cli_delay_ms :
+        Global inter-frame delay from --delay (overridden per device).
+    cli_error_pct :
+        Global error rate from --errors (overridden per device).
     """
     base_dir = devices_file.parent
 
@@ -187,11 +185,24 @@ def load_devices(devices_file: Path, bus: CANBus) -> List[SimulatedDevice]:
             .replace(".py", ".txt")
         )
 
-        # Extension point: read entry.get("protocol", "uds") here and
-        # select the appropriate ProtocolHandler class.
-        protocol_class = UDSHandler
+        fault_config = FaultConfig.from_config(
+            entry,
+            cli_delay_ms=cli_delay_ms,
+            cli_error_pct=cli_error_pct,
+        )
 
-        # Build device first (creates the DatapointStore).
+        # Service 77 protection list: DIDs that normal WriteDataByIdentifier
+        # must reject with NRC 0x22.  Service 77 accepts them regardless.
+        s77_raw = entry.get("service77", [])
+        service77_dids = frozenset(int(d) for d in s77_raw)
+        if service77_dids:
+            logging.debug(
+                "[%s] Service-77-protected DIDs: %s",
+                name, sorted(service77_dids),
+            )
+
+        protocol_class = UDSHandler  # extension point
+
         device = SimulatedDevice(
             name=name,
             tx_id=tx_id,
@@ -199,10 +210,11 @@ def load_devices(devices_file: Path, bus: CANBus) -> List[SimulatedDevice]:
             dp_values_path=dp_val_path,
             bus=bus,
             protocol_class=protocol_class,
-            cyclic_task=None,  # attached below after store is ready
+            cyclic_task=None,
+            fault_config=fault_config,
+            service77_dids=service77_dids,
         )
 
-        # Attach cyclic task if configured.
         if "cyclic" in entry:
             try:
                 cyclic = _build_cyclic_task(
@@ -218,9 +230,12 @@ def load_devices(devices_file: Path, bus: CANBus) -> List[SimulatedDevice]:
         device.register()
         devices.append(device)
         logging.info(
-            "Loaded device %r (tx=0x%03X, dpList=%s, cyclic=%s)",
-            name, tx_id, dp_path,
+            "Loaded device %r (tx=0x%03X, delay=%dms, errors=%.1f%%,"
+            " cyclic=%s, s77_protected=%d DID(s))",
+            name, tx_id,
+            fault_config.delay_ms, fault_config.error_pct,
             "yes" if device._cyclic_task else "no",
+            len(service77_dids),
         )
 
     return devices
@@ -233,7 +248,11 @@ async def run(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f"Devices file not found: {devices_file}")
 
     bus = CANBus(interface=args.interface, channel=args.channel)
-    devices = load_devices(devices_file, bus)
+    devices = load_devices(
+        devices_file, bus,
+        cli_delay_ms=args.delay,
+        cli_error_pct=args.errors,
+    )
 
     await bus.start()
     for device in devices:
