@@ -74,10 +74,10 @@ logger = logging.getLogger(__name__)
 # Service 77 constants
 # ---------------------------------------------------------------------------
 
-SID_SERVICE77         = 0x77
-S77_CONFIRM_BYTE      = 0x44   # fixed last byte of every positive response
-S77_REQUEST_ID_OFFSET = 0x02   # request CAN-ID  = device tx_id + 0x02
-S77_RESPONSE_ID_OFFSET = 0x12  # response CAN-ID = device tx_id + 0x12
+SID_SERVICE77          = 0x77
+S77_CONFIRM_BYTE       = 0x44   # fixed last byte of every positive response
+S77_REQUEST_ID_OFFSET  = 0x02   # request CAN-ID  = device tx_id + 0x02
+S77_RESPONSE_ID_OFFSET = 0x12   # response CAN-ID = device tx_id + 0x12
                                 # (= request + standard UDS offset 0x10)
 
 

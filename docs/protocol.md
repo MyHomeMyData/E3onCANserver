@@ -79,3 +79,90 @@ can0  693   [8]  29 00 00 00 00 00 00 00
 can0  693   [8]  2A 00 00 00 00 00 00 00
 can0  693   [8]  2B 00 00 00 00 55 55 55
 ```
+
+---
+
+## Service 77 (proprietary write protocol)
+
+### Background
+
+Service 77 is a Viessmann-proprietary write protocol discovered via reverse engineering. It operates in parallel with UDS on a dedicated CAN-ID pair and allows writing of data points that are protected against normal `WriteDataByIdentifier` (UDS service 0x2E).
+
+Viessmann uses this mechanism to protect certain data points from accidental or unauthorised modification. When a client receives NRC `0x22` (conditionsNotCorrect) in response to a normal UDS write, it can retry the same write using Service 77 on the dedicated CAN-ID.
+
+Both protocols share the same data store: a value written via Service 77 is immediately readable via UDS `ReadDataByIdentifier`.
+
+### CAN-ID mapping
+
+The Service 77 CAN-IDs are derived from the device's UDS address:
+
+| | CAN-ID |
+|---|---|
+| Service 77 request  | `device_tx + 0x02`  (e.g. `0x682` for main device at `0x680`) |
+| Service 77 response | `device_tx + 0x12`  (= request + `0x10`) |
+
+### Transport layer
+
+Service 77 uses the same ISO 15765-2 (ISO-TP) framing as UDS. The reassembled payload is described below.
+
+### Request frame format
+
+```
+[0x77] [DID_HIGH] [DID_LOW] [PREFIX_0] [PREFIX_1] [PREFIX_2] [PREFIX_3] [PREFIX_4] [PREFIX_5] [DATA ...]
+```
+
+| Field | Bytes | Description |
+|---|---|---|
+| Service ID | 1 | Always `0x77` |
+| DID | 2 | Data identifier, big-endian (high byte first) |
+| Prefix | 6 | Client-specific prefix bytes, content not known; ignored by the server |
+| Data | n | New value for the data point |
+
+The 6-byte prefix is present in every request. Its content is not known in detail and is not stored.
+
+### Response frame format
+
+Positive response:
+
+```
+[0x77] [DID_HIGH] [DID_LOW] [0x44]
+```
+
+| Field | Bytes | Description |
+|---|---|---|
+| Service ID | 1 | Always `0x77` |
+| DID | 2 | Data identifier echoed from request (high byte first) |
+| Confirmation byte | 1 | Always `0x44` (Viessmann-specific, no UDS equivalent) |
+
+Negative response (reuses UDS encoding):
+
+```
+[0x7F] [0x77] [NRC]
+```
+
+| NRC | Meaning |
+|---|---|
+| `0x12` | Payload too short (subFunctionNotSupported) |
+| `0x31` | DID not present in data store (requestOutOfRange) |
+
+### Interaction with UDS WriteDataByIdentifier
+
+The `service77` key in `devices.json` specifies a list of DIDs that are protected against normal UDS writes:
+
+* A `WriteDataByIdentifier` (0x2E) request targeting a protected DID returns NRC `0x22` (conditionsNotCorrect) without modifying the data store.
+* A Service 77 request targeting the same DID is accepted and the value is written normally.
+* Service 77 accepts writes to **all** known DIDs, including unprotected ones.
+
+### Example exchange
+
+Write DID `0x044C` (decimal 1100) on the main device (`tx = 0x680`):
+
+```
+# Client request on 0x682 (= 0x680 + 0x02):
+682   [8]  07 77 04 4C AA BB CC DD EE FF  ← SID=77, DID=044C, 6-byte prefix, data=AA BB CC
+
+# (ISO-TP framing applies for payloads > 7 bytes; shown here as single frame for brevity)
+
+# Server response on 0x692 (= 0x682 + 0x10):
+692   [8]  04 77 04 4C 44 55 55 55       ← SID=77, DID=044C, confirm=0x44
+```

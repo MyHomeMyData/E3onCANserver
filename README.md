@@ -1,16 +1,18 @@
 ![Logo](admin/e3oncan_small.png)
 # E3onCANserver
 
-A simulator of Viessmann E3-series devices (Vitocal, Vitodens, VX3/Vitocharge) on CAN-bus.
+A simulator of Viessmann E3-series devices (Vitocal, Vitodens, VX3/Vitocharge) on CAN-bus and via DoIP.
 
 The simulator listens on a virtual CAN interface (`vcan0`) and responds to
 **UDSonCAN** requests from client software such as
-[open3e](https://github.com/open3e/open3e).  Multiple devices can be simulated
+[open3e](https://github.com/open3e/open3e) or [ioBroker.e3oncan](https://github.com/MyHomeMyData/ioBroker.e3oncan).  Multiple devices can be simulated
 in parallel, each on its own CAN arbitration ID.
+
+Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used over TCP/IP. Communication to only one device per connection. The CAN bus is then deactivated.
 
 ## Status
 
-**v0.4 – added Viessmann Service 77 write protocol**
+**v0.5 – added DoIP (Diagnostics over IP) support**
 
 | Feature | Status |
 |---|---|
@@ -24,6 +26,7 @@ in parallel, each on its own CAN arbitration ID.
 | Inter-frame delay | ✅ |
 | Fault injection for robustness testing | ✅ |
 | Viessmann Service 77 write protocol | ✅ |
+| DoIP (ISO 13400) server | ✅ |
 
 ## Requirements
 
@@ -140,6 +143,7 @@ Options:
 --delay     MS      Inter-frame delay in ms, all devices (0–200, default: 0)
 --errors    PCT     Fault injection rate in %, all devices (0–20, default: 0)
 --log-level LEVEL   DEBUG | INFO | WARNING | ERROR (default: INFO)
+--doip      [HOST:]PORT  Run in DoIP mode (e.g. 13400 or 0.0.0.0:13400)
 ```
 
 ### Testing with open3e
@@ -147,11 +151,18 @@ Options:
 With `vcan0` up and the simulator running:
 
 ```bash
-# Read datapoint 256 from device vcal
+# Read datapoint 256 from device 0x680
 open3e --can vcan0 -v -r 256
 ```
 
-### Monitoring the bus
+Simulator running with `--doip`:
+
+```bash
+# Read datapoint 256 from device 0x680
+open3e --doip 127.0.0.1 -v -r 256
+```
+
+### Monitoring the CAN bus
 
 ```bash
 candump vcan0
@@ -218,6 +229,63 @@ Configuration is via the `cyclic` block in devices.json. Two encoder types are a
 | `raw` | Sends the value stored for the DID, or an optional fixed hex string |
 | `localtime` | Sends the current local time as 3 bytes `[HH, MM, SS]` |
 
+## DoIP mode
+
+DoIP (Diagnostics over IP, ISO 13400) allows UDS clients to communicate with
+the simulator over TCP instead of CAN.  This is useful for testing
+[open3e](https://github.com/open3e/open3e) in DoIP mode without physical
+Viessmann hardware.
+
+### Starting in DoIP mode
+
+```bash
+# Listen on localhost, standard DoIP port
+python main.py --devices config/devices.json --doip
+
+# Listen on all interfaces
+python main.py --devices config/devices.json --doip 0.0.0.0
+```
+
+When `--doip` is set, `--interface` and `--channel` are ignored – no CAN bus
+is opened.  Cyclic (Collect) messages are not sent in DoIP mode.
+
+### Connecting with open3e
+
+```bash
+# Read datapoint 256 from the main device (ECU address 0x680)
+open3e --doip 127.0.0.1 -tx 0x680 -v -r 256
+```
+
+The ECU address (`-tx`) must match the `tx` value in `devices.json`.
+
+### What is supported in DoIP mode
+
+| Feature | DoIP mode |
+|---|---|
+| ReadDataByIdentifier (0x22) | ✅ |
+| WriteDataByIdentifier (0x2E) | ✅ |
+| Service 77 protection list (NRC 0x22) | ✅ |
+| Fault injection (`--errors`) | ✅ |
+| Inter-frame delay (`--delay`) | ✅ |
+| Service 77 write protocol | ❌ (CAN-only) |
+| Cyclic unsolicited TX (Collect) | ❌ (CAN-only) |
+
+### DoIP protocol details
+
+The simulator implements the minimal DoIP subset required by `doipclient`
+(the library used by open3e):
+
+| Payload type | Description |
+|---|---|
+| `0x0005` | Routing Activation Request (client → server) |
+| `0x0006` | Routing Activation Response (server → client) |
+| `0x8001` | Diagnostic Message (UDS payload, both directions) |
+| `0x8002` | Diagnostic Message Positive ACK (server → client) |
+
+The standard DoIP port is 13400.  The target address in the client's request
+is the device's `tx` value from `devices.json` (e.g. `0x0680`).
+
+
 ## Robustness testing
 
 ### Inter-frame delay
@@ -263,7 +331,7 @@ With `--log-level DEBUG`, every injected fault is logged with its type and the a
 
 ## CAN-ID address space
 
-| Device | UDS Request | UDS Response | S77 Request | S77 Response | Collect (unsolicited) |
+| Device | UDS/DoIP Addr | UDS Response | S77 Request | S77 Response | Collect (unsolicited) |
 |---|---|---|---|---|---|
 | vcal (HPMUMASTER) | 0x680 | 0x690 | 0x682 | 0x692 | 0x693 |
 | vx3 (EMCUMASTER) | 0x6A1 | 0x6B1 | 0x6A3 | 0x6B3 | 0x451 |
@@ -348,6 +416,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+
+### 0.5.0 (2026-03-31)
+* (MyHomeMyData) Added DoIP (ISO 13400) server for testing open3e in DoIP mode
 
 ### 0.4.0 (2026-03-30)
 * (MyHomeMyData) Added Viessmann Service 77 proprietary write protocol

@@ -167,6 +167,71 @@ class SimulatedDevice:
     def datastore(self) -> DatapointStore:
         return self._store
 
+
+    async def handle_uds_payload(self, payload: bytes) -> Optional[bytes]:
+        """
+        Process a fully reassembled UDS payload received via DoIP.
+
+        This method is the DoIP entry point: it bypasses the ISO-TP assembler
+        (DoIP delivers pre-reassembled payloads) and calls the UDS handler
+        directly.  Fault injection (delay, error rate) is applied to the
+        response the same way as for CAN responses.
+
+        Parameters
+        ----------
+        payload :
+            Complete UDS request bytes (e.g. [0x22, 0x01, 0x00]).
+
+        Returns
+        -------
+        bytes
+            UDS response payload (without any transport framing).
+        None
+            If the handler produces no response.
+        """
+        logger.debug("[%s/DoIP] dispatching: %s", self.name, payload.hex(" "))
+        response = self._uds_handler.handle(payload, self._store)
+
+        if response is None:
+            logger.debug("[%s/DoIP] handler returned no response", self.name)
+            return None
+
+        # Apply fault injection (delay + possible corruption).
+        # For DoIP we collect the faulted bytes into a buffer instead of
+        # sending CAN frames; a simple async gather does the job.
+        faulted: list[bytes] = []
+
+        async def _collect(frame: bytes) -> None:
+            faulted.append(frame)
+
+        import asyncio as _asyncio
+        from simulator.protocol.isotp import segment
+        frames = segment(response)
+        await self._injector.send_frames(
+            frames,
+            send_fn=_collect,
+            wait_for_fc=None,   # no flow control needed – DoIP is stream-based
+        )
+
+        # Reassemble the (possibly faulted) frames back into a UDS payload.
+        # Strip ISO-TP framing headers to recover the raw UDS bytes.
+        if not faulted:
+            return None
+
+        if len(faulted) == 1:
+            # Single Frame: byte 0 = length nibble, bytes 1+ = UDS payload
+            sf = faulted[0]
+            length = sf[0] & 0x0F
+            return bytes(sf[1:1 + length])
+        else:
+            # Multi Frame: reassemble from FF + CFs
+            ff = faulted[0]
+            total = ((ff[0] & 0x0F) << 8) | ff[1]
+            buf = bytearray(ff[2:8])
+            for cf in faulted[1:]:
+                buf.extend(cf[1:8])
+            return bytes(buf[:total])
+
     # ------------------------------------------------------------------
     # RX callbacks – post frames into the appropriate queue
     # ------------------------------------------------------------------
