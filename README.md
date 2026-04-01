@@ -357,68 +357,79 @@ installation is needed on the host – only Docker.
 | `docker/start-doip.sh` | Convenience wrapper for DoIP mode |
 | `.env.example` | Template for environment variable overrides |
 
+### How it works
+
+The entire project directory is mounted read-only into the container at `/app`.
+The path to `devices.json` is passed via the `DEVICES` environment variable,
+relative to the project root – exactly as with a direct `python main.py --devices` call.
+The `devices.json` file itself contains the paths to the `virtdata_*.txt` value files,
+so everything resolves naturally from the same base directory.
+
 ### Quick start
 
-**Build the image** (once, or after code changes):
+**Step 1 – Copy and edit the environment file:**
+
+```bash
+cp .env.example .env
+# Edit .env to set MODE, DEVICES, and other options
+```
+
+**Step 2 – Build the image** (once, or after code changes):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.doip.yml build
 ```
 
-**DoIP mode** – no CAN adapter needed, just a TCP port:
+**Step 3 – Start:**
 
 ```bash
-# Using the convenience script:
+# DoIP mode (no CAN adapter needed):
 ./docker/start-doip.sh up -d
 
-# Or explicitly:
-docker compose -f docker-compose.yml -f docker-compose.doip.yml up
+# CAN mode (requires vcan0 on the host):
+./docker/start-can.sh up -d
 ```
 
-The server listens on port `13400`. Connect with open3e:
+**Step 4 – Connect with open3e (DoIP mode):**
 
 ```bash
 open3e --doip <host-ip> --tx 0x680 -v -r 256
 ```
 
-**CAN mode** – requires `vcan0` (or a real CAN adapter) on the host:
+### Using a different devices.json
+
+Set `DEVICES` in `.env` to any path relative to the project root:
 
 ```bash
-# Set up vcan0 first (once per boot):
+# .env
+DEVICES=.local_data/devices.json
+```
+
+The referenced `virtdata_*.txt` files are resolved relative to the `devices.json`
+location, just as when running `main.py` directly.
+
+### CAN mode prerequisites
+
+```bash
 sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
-
-# Start the container:
-./docker/start-can.sh up -d
 ```
 
-The container uses `--network host` so it can access the host's CAN interface directly.
-
-### Configuration
-
-The `config/` and `data/` directories are mounted read-only into the container.
-Edit `config/devices.json` and the `data/virtdata_*.txt` files on the host and
-restart the container – no rebuild needed.
+The CAN mode container uses `--network host` so it can access the host's CAN
+interface directly.
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and adjust as needed. Docker Compose loads `.env`
-automatically:
-
-```bash
-cp .env.example .env
-```
-
 | Variable | Default | Description |
 |---|---|---|
-| DEVICES | config/devices.json | Device configuration relative to docker home |
+| `MODE` | `can` | `can` or `doip` |
+| `DEVICES` | `config/devices.json` | Path to devices.json, relative to project root |
+| `CAN_IFACE` | `vcan0` | CAN mode: interface name on the host |
+| `DOIP_ADDR` | `0.0.0.0:13400` | DoIP mode: bind address `[HOST:]PORT` |
+| `DELAY` | `0` | Inter-frame delay in ms (0–200) |
+| `ERRORS` | `0` | Fault injection rate in % (0–20) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `DELAY_MS` | `0` | Inter-frame delay in ms (0–200) |
-| `ERROR_PCT` | `0` | Fault injection rate in % (0–20) |
-| `CAN_INTERFACE` | `socketcan` | CAN mode only: python-can interface type |
-| `CAN_CHANNEL` | `vcan0` | CAN mode only: CAN channel name |
-| `DOIP_PORT` | `13400` | DoIP mode only: host port to expose |
 
 Example – start DoIP mode using `myconfig/mydevices.json` with debug logging and 10% fault injection:
 
@@ -431,9 +442,6 @@ DEVICES=myconfig/mydevices.json LOG_LEVEL=DEBUG ERROR_PCT=10 ./docker/start-doip
 ```bash
 # Watch the logs
 docker logs -f e3oncanserver
-
-# Stop (keep container):
-./docker/start-doip.sh stop
 
 # Stop and remove container:
 ./docker/start-doip.sh down
@@ -488,11 +496,12 @@ E3onCANserver/
 ├── docker-compose.yml         # Shared base
 ├── docker-compose.can.yml     # CAN mode override
 ├── docker-compose.doip.yml    # DoIP mode override
-├── .env.example               # Environment variable template
+├── .env.example               # Environment variable template (.env holds local settings)
 └── docker/
     ├── entrypoint.sh          # Container startup script
     ├── start-can.sh           # Convenience wrapper for CAN mode
     └── start-doip.sh          # Convenience wrapper for DoIP mode
+# Any subdirectory (e.g. .local_data/) can hold alternative devices.json variants
 ```
 
 ## Extending the simulator
