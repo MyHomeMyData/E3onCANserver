@@ -1,0 +1,19 @@
+# docker-compose.doip.yml – DoIP mode override.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.doip.yml up
+#
+# The DoIP server listens on TCP port 13400 (the ISO 13400 standard port).
+# No CAN adapter is required.
+#
+# Connect with open3e:
+#   open3e --doip <host-ip> --ecutx 0x680 -v -r 256
+
+services:
+  e3oncanserver:
+    ports:
+      - "${DOIP_PORT:-13400}:13400"
+
+    environment:
+      MODE:      doip
+      DOIP_ADDR: 0.0.0.0:13400

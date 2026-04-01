@@ -1,0 +1,15 @@
+# Development files not needed in the image
+tests/
+docs/
+admin/
+*.md
+*.toml
+*.txt
+.env*
+.git*
+__pycache__/
+*.pyc
+*.pyo
+ioBroker_README.md
+data-points.md
+docker-compose*.yml

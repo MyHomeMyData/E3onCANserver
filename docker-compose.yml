@@ -1,0 +1,32 @@
+# docker-compose.yml – Base configuration shared by both modes.
+#
+# Do not use this file directly. Use one of:
+#   docker compose -f docker-compose.yml -f docker-compose.can.yml up
+#   docker compose -f docker-compose.yml -f docker-compose.doip.yml up
+#
+# Or use the convenience wrapper scripts:
+#   ./docker/start-can.sh
+#   ./docker/start-doip.sh
+#
+# See README.md for full usage instructions.
+
+services:
+  e3oncanserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: e3oncanserver:latest
+    container_name: e3oncanserver
+    
+    restart: unless-stopped
+
+    # Configuration and data directories are mounted from the host so they
+    # can be edited without rebuilding the image.
+    volumes:
+      - ./:/app:ro
+
+    environment:
+      LOG_LEVEL:    ${LOG_LEVEL:-INFO}
+      DELAY_MS:     ${DELAY_MS:-0}
+      ERROR_PCT:    ${ERROR_PCT:-0}
+      DEVICES_FILE: /app/${DEVICES:-config/devices.json}

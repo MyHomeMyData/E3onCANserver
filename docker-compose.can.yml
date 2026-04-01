@@ -1,0 +1,21 @@
+# docker-compose.can.yml – CAN mode override.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.can.yml up
+#
+# Prerequisites on the host:
+#   sudo modprobe vcan
+#   sudo ip link add dev vcan0 type vcan
+#   sudo ip link set up vcan0
+#
+# The container uses --network host so it can access the host's vcan interface
+# directly. No port mapping is needed.
+
+services:
+  e3oncanserver:
+    network_mode: host
+
+    environment:
+      MODE:          can
+      CAN_INTERFACE: ${CAN_INTERFACE:-socketcan}
+      CAN_CHANNEL:   ${CAN_CHANNEL:-vcan0}

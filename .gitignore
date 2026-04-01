@@ -9,3 +9,4 @@ build/
 venv/
 *.log
 .local_data/
+.env
