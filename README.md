@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.5 – added DoIP (Diagnostics over IP) support**
+**v0.5.1 – Added docker files**
 
 | Feature | Status |
 |---|---|
@@ -27,6 +27,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 | Fault injection for robustness testing | ✅ |
 | Viessmann Service 77 write protocol | ✅ |
 | DoIP (ISO 13400) server | ✅ |
+| Docker files | ✅ |
 
 ## Requirements
 
@@ -336,6 +337,113 @@ With `--log-level DEBUG`, every injected fault is logged with its type and the a
 | vcal (HPMUMASTER) | 0x680 | 0x690 | 0x682 | 0x692 | 0x693 |
 | vx3 (EMCUMASTER) | 0x6A1 | 0x6B1 | 0x6A3 | 0x6B3 | 0x451 |
 
+---
+
+## Docker
+
+The simulator can be run in a Docker container using Docker Compose. No Python
+installation is needed on the host – only Docker.
+
+### Files
+
+| File | Description |
+|---|---|
+| `Dockerfile` | Image definition (Python 3.12-slim + python-can) |
+| `docker-compose.yml` | Shared base configuration |
+| `docker-compose.can.yml` | CAN mode override |
+| `docker-compose.doip.yml` | DoIP mode override |
+| `docker/entrypoint.sh` | Startup script, reads environment variables |
+| `docker/start-can.sh` | Convenience wrapper for CAN mode |
+| `docker/start-doip.sh` | Convenience wrapper for DoIP mode |
+| `.env.example` | Template for environment variable overrides |
+
+### Quick start
+
+**Build the image** (once, or after code changes):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.doip.yml build
+```
+
+**DoIP mode** – no CAN adapter needed, just a TCP port:
+
+```bash
+# Using the convenience script:
+./docker/start-doip.sh up -d
+
+# Or explicitly:
+docker compose -f docker-compose.yml -f docker-compose.doip.yml up
+```
+
+The server listens on port `13400`. Connect with open3e:
+
+```bash
+open3e --doip <host-ip> --tx 0x680 -v -r 256
+```
+
+**CAN mode** – requires `vcan0` (or a real CAN adapter) on the host:
+
+```bash
+# Set up vcan0 first (once per boot):
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+
+# Start the container:
+./docker/start-can.sh up -d
+```
+
+The container uses `--network host` so it can access the host's CAN interface directly.
+
+### Configuration
+
+The `config/` and `data/` directories are mounted read-only into the container.
+Edit `config/devices.json` and the `data/virtdata_*.txt` files on the host and
+restart the container – no rebuild needed.
+
+### Environment variables
+
+Copy `.env.example` to `.env` and adjust as needed. Docker Compose loads `.env`
+automatically:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| DEVICES | config/devices.json | Device configuration relative to docker home |
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `DELAY_MS` | `0` | Inter-frame delay in ms (0–200) |
+| `ERROR_PCT` | `0` | Fault injection rate in % (0–20) |
+| `CAN_INTERFACE` | `socketcan` | CAN mode only: python-can interface type |
+| `CAN_CHANNEL` | `vcan0` | CAN mode only: CAN channel name |
+| `DOIP_PORT` | `13400` | DoIP mode only: host port to expose |
+
+Example – start DoIP mode using `myconfig/mydevices.json` with debug logging and 10% fault injection:
+
+```bash
+DEVICES=myconfig/mydevices.json LOG_LEVEL=DEBUG ERROR_PCT=10 ./docker/start-doip.sh up -d
+```
+
+### Monitoring, stopping and cleaning up
+
+```bash
+# Watch the logs
+docker logs -f e3oncanserver
+
+# Stop (keep container):
+./docker/start-doip.sh stop
+
+# Stop and remove container:
+./docker/start-doip.sh down
+
+# Remove image too:
+./docker/start-doip.sh down --rmi local
+```
+
+---
+
 ## Running the tests
 
 ```bash
@@ -375,7 +483,16 @@ E3onCANserver/
 │   └── test_uds.py
 ├── main.py
 ├── requirements.txt
-└── pyproject.toml
+├── pyproject.toml
+├── Dockerfile
+├── docker-compose.yml         # Shared base
+├── docker-compose.can.yml     # CAN mode override
+├── docker-compose.doip.yml    # DoIP mode override
+├── .env.example               # Environment variable template
+└── docker/
+    ├── entrypoint.sh          # Container startup script
+    ├── start-can.sh           # Convenience wrapper for CAN mode
+    └── start-doip.sh          # Convenience wrapper for DoIP mode
 ```
 
 ## Extending the simulator
@@ -416,6 +533,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+
+### 0.5.1 (2026-04-01)
+* (MyHomeMyData) Added docker files
 
 ### 0.5.0 (2026-03-31)
 * (MyHomeMyData) Added DoIP (ISO 13400) server for testing open3e in DoIP mode
