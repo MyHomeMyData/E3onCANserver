@@ -543,6 +543,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     ### **WORK IN PROGRESS**
 -->
 
+### 0.5.2 (2026-04-10)
+* (MyHomeMyData) Fixed wrong assignment in .env.example
+
 ### 0.5.1 (2026-04-01)
 * (MyHomeMyData) Added docker files
 
