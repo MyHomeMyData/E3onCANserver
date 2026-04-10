@@ -66,7 +66,7 @@ from simulator.protocol.encoders import Encoder
 from simulator.protocol.uds import UDSHandler
 from simulator.doip import DoIPServer, DEFAULT_HOST, DEFAULT_PORT
 
-pgm_ver_str = 'V0.5.0 (2026-03-31)'
+pgm_ver_str = 'V0.5.2 (2026-04-10)'
 
 
 def parse_args() -> argparse.Namespace:
