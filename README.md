@@ -221,7 +221,7 @@ Service 77 is always active for every device – no additional configuration is 
 
 ### Collect (cyclic unsolicited TX)
 
-The Viessmann-proprietary broadcast protocol used by E3 devices to push datapoint values to listening clients at fixed intervals. Operates on a separate CAN-ID independent of UDS and Service 77. See `docs/protocol.md` for the full frame format specification.
+The Viessmann-proprietary broadcast protocol used by E3 devices to push datapoint values to listening clients at fixed intervals. Operates on a separate CAN-ID independent of UDS and Service 77. See `docs/protocols.md` for the full frame format specification.
 
 Configuration is via the `cyclic` block in devices.json. Two encoder types are available:
 
@@ -481,7 +481,7 @@ E3onCANserver/
 │   ├── virtdata_680.txt    # Example datapoint values for vcal
 │   └── virtdata_6a1.txt    # Example datapoint values for vx3
 ├── docs/
-│   └── protocol.md         # Viessmann "Collect" protocol frame format
+│   └── protocols.md        # Protocol frame formats used
 ├── tests/
 │   ├── test_collect.py
 │   ├── test_datastore.py
