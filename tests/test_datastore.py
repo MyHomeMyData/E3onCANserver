@@ -39,6 +39,19 @@ def compact_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def zero_length_file(tmp_path: Path) -> Path:
+    """DIDs with no payload: bare DID number, or DID followed by spaces."""
+    content = (
+        "100 AABB\n"
+        "259\n"       # bare DID – length 0
+        "260   \n"    # DID followed by spaces – length 0
+    )
+    f = tmp_path / "dp_zero.txt"
+    f.write_text(content)
+    return f
+
+
+@pytest.fixture
 def mixed_file(tmp_path: Path) -> Path:
     """Mix of spaced and compact lines in one file."""
     content = (
@@ -106,6 +119,15 @@ def test_dynamic_resolver(sample_file):
     store = DatapointStore.from_file(sample_file)
     store.register_resolver(256, lambda: bytes([0xAA, 0xBB]))
     assert store.read(256) == bytes([0xAA, 0xBB])
+
+
+def test_zero_length_dids(zero_length_file):
+    """DIDs with no payload bytes must be stored as b'' (not None, not raise)."""
+    store = DatapointStore.from_file(zero_length_file)
+    assert len(store) == 3
+    assert store.read(100) == bytes([0xAA, 0xBB])
+    assert store.read(259) == b""
+    assert store.read(260) == b""
 
 
 def test_known_dids_sorted(sample_file):

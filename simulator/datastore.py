@@ -89,16 +89,18 @@ class DatapointStore:
                 if not line or line.startswith("#"):
                     continue
                 parts = line.split()
-                if len(parts) < 2:
+                if len(parts) < 1:
                     raise ValueError(
-                        f"{path}:{lineno}: expected '<DID> <HEX ...>', got {line!r}"
+                        f"{path}:{lineno}: expected '<DID> [<HEX ...>]', got {line!r}"
                     )
                 try:
                     did = int(parts[0])
-                    if len(parts) > 2:
-                        dataStr = parts[1:] # delimiter used between bytes
+                    if len(parts) == 1:
+                        dataStr = []  # DID with zero-length payload
+                    elif len(parts) > 2:
+                        dataStr = parts[1:]  # delimiter used between bytes
                     else:
-                        it = iter(parts[1]) # no delimiter used
+                        it = iter(parts[1])  # no delimiter used
                         dataStr = ["".join(next(iter(it)) for idx in range(size)) for size in [2]*(len(parts[1])//2)]
                     data = bytes(int(b, 16) for b in dataStr)
                 except ValueError as exc:
