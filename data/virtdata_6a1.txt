@@ -5,6 +5,10 @@
 # Busidentification
 256 3b0206004700fd01c30801000300f9013001020030303030303030303030303030383135
 
+# Two DIDs with a length of 0
+259 
+260
+
 # DID 268 (0x010C) – example: flow temperature
 268 8c01c1007a027e0100
 
