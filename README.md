@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.5.3 – Added DIDs of length zero**
+**v0.6.0 – Energy meter simulation**
 
 | Feature | Status |
 |---|---|
@@ -23,6 +23,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 | Multiple parallel devices | ✅ |
 | Dynamic value generation | 🔜 planned |
 | Cyclic unsolicited TX (Collect protocol) | ✅ |
+| Energy meter simulation (E380 CA, E3100CB) | ✅ |
 | Inter-frame delay | ✅ |
 | Fault injection for robustness testing | ✅ |
 | Viessmann Service 77 write protocol | ✅ |
@@ -93,6 +94,11 @@ Pass the path via `--devices`.  Full example (`config/devices.json`):
         }
       ]
     }
+  },
+  "energy_meter": {
+    "e380ca_97": { "tx": "0x250", "msg": "00 00 00 00 00 00 00 00", "schedule": 1 },
+    "e380ca_98": { "tx": "0x251", "msg": "00 00 00 00 00 00 00 00", "schedule": 1 },
+    "e3100cb":   { "tx": "0x569", "msg": "00 00 00 04 00 00 00 00", "schedule": 1 }
   }
 }
 ```
@@ -106,6 +112,7 @@ Pass the path via `--devices`.  Full example (`config/devices.json`):
 | `errors` | Fault injection rate in % for UDS responses (0.0–20.0, optional). Overrides `--errors`. |
 | `service77` | List of DID integers protected against normal WriteDataByIdentifier (optional). These DIDs can only be written via Service 77. |
 | `cyclic` | Specification of unsolicited, cyclically sent messages (optional) |
+| `energy_meter` | Optional section. Each entry sends a fixed raw CAN frame at a fixed interval (see below). |
 
 The simulator responds on `tx + 0x10` (e.g. requests on `0x680` → responses on `0x690`).
 
@@ -128,6 +135,7 @@ Lines starting with `#` are comments.
 ```
 
 Use of delimiter between bytes is optional.
+A line with only a DID number (no bytes, or only trailing spaces) defines a DID with zero-length payload.
 
 ## Usage
 
@@ -230,6 +238,25 @@ Configuration is via the `cyclic` block in devices.json. Two encoder types are a
 | `raw` | Sends the value stored for the DID, or an optional fixed hex string |
 | `localtime` | Sends the current local time as 3 bytes `[HH, MM, SS]` |
 
+### Energy meter simulation (E380 CA, E3100CB)
+
+Viessmann energy meters broadcast fixed 8-byte raw CAN frames at a regular
+interval without any protocol framing.  The simulator reproduces this behaviour
+via the optional `energy_meter` section in the devices JSON file.
+
+Each entry under `energy_meter` defines one simulated meter:
+
+| Key | Description |
+|---|---|
+| `tx` | CAN-ID on which the frame is broadcast (hex string) |
+| `msg` | Fixed 8-byte payload as space-separated hex bytes |
+| `schedule` | Broadcast interval in seconds |
+
+If the `energy_meter` section is absent or empty, no energy meters are started.
+Energy meter simulation is CAN-only; it is not available in DoIP mode.
+
+See `docs/protocols.md` for the E380 CA and E3100CB frame format details.
+
 ## DoIP mode
 
 DoIP (Diagnostics over IP, ISO 13400) allows UDS clients to communicate with
@@ -270,6 +297,7 @@ The ECU address (`-tx`) must match the `tx` value in `devices.json`.
 | Inter-frame delay (`--delay`) | ✅ |
 | Service 77 write protocol | ❌ (CAN-only) |
 | Cyclic unsolicited TX (Collect) | ❌ (CAN-only) |
+| Energy meter simulation | ❌ (CAN-only) |
 
 ### DoIP protocol details
 
@@ -467,6 +495,7 @@ E3onCANserver/
 │   ├── cyclic.py           # Unsolicited broadcast scheduler for one device
 │   ├── datastore.py        # Per-device datapoint storage (dict + resolver API)
 │   ├── device.py           # SimulatedDevice: UDS + Service 77 + cyclic workers
+│   ├── energy_meter.py     # Periodic raw-frame broadcaster for energy meter simulation
 │   ├── faults.py           # Delay and fault injection for UDS / Service 77 responses
 │   └── protocol/
 │       ├── base.py         # Abstract ProtocolHandler base class
@@ -542,6 +571,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### 0.6.0 (2026-04-23)
+* (MyHomeMyData) Added energy meter simulation (E380 CA, E3100CB) via `energy_meter` section in devices JSON
+
 ### 0.5.3 (2026-04-21)
 * (MyHomeMyData) Added possibility to send DIDs of length zero
 

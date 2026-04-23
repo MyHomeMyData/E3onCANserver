@@ -61,12 +61,13 @@ from typing import List, Optional
 from simulator.bus import CANBus
 from simulator.cyclic import CyclicMessage, CyclicTask
 from simulator.device import SimulatedDevice
+from simulator.energy_meter import EnergyMeterTask
 from simulator.faults import DELAY_MAX_MS, ERROR_PCT_MAX, FaultConfig
 from simulator.protocol.encoders import Encoder
 from simulator.protocol.uds import UDSHandler
 from simulator.doip import DoIPServer, DEFAULT_HOST, DEFAULT_PORT
 
-pgm_ver_str = 'V0.5.3 (2026-04-21)'
+pgm_ver_str = 'V0.6.0 (2026-04-23)'
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,6 +209,8 @@ def load_devices(
 
     devices: List[SimulatedDevice] = []
     for name, entry in config.items():
+        if name == "energy_meter":
+            continue
         tx_id = int(entry["tx"], 16)
         dp_path = base_dir / entry["dpList"]
         dp_val_path = (
@@ -277,6 +280,33 @@ def load_devices(
     return devices
 
 
+def load_energy_meters(
+    devices_file: Path,
+    bus: CANBus,
+) -> List[EnergyMeterTask]:
+    """
+    Parse the optional ``"energy_meter"`` section of the devices JSON file
+    and return one EnergyMeterTask per entry.
+
+    If the section is absent or empty, an empty list is returned.
+    """
+    with devices_file.open("r", encoding="utf-8") as fh:
+        config = json.load(fh)
+
+    meters: List[EnergyMeterTask] = []
+    for name, entry in config.get("energy_meter", {}).items():
+        tx_id = int(entry["tx"], 16)
+        msg = bytes(int(b, 16) for b in entry["msg"].split())
+        schedule = float(entry["schedule"])
+        meters.append(EnergyMeterTask(
+            name=name, tx_id=tx_id, msg=msg, schedule=schedule, bus=bus,
+        ))
+        logging.info(
+            "Loaded energy meter %r (tx=0x%03X, schedule=%.1fs, msg=%s)",
+            name, tx_id, schedule, msg.hex(" "),
+        )
+    return meters
+
 
 def _parse_doip_address(spec: str) -> tuple[str, int]:
     """
@@ -334,18 +364,23 @@ async def _run_can(args: argparse.Namespace, devices_file: Path) -> None:
         cli_delay_ms=args.delay,
         cli_error_pct=args.errors,
     )
+    meters = load_energy_meters(devices_file, bus)
 
     await bus.start()
     for device in devices:
         await device.start()
+    for meter in meters:
+        await meter.start()
 
     logging.info(
-        "Simulator running – %d device(s) active. Press Ctrl-C to stop.",
-        len(devices),
+        "Simulator running – %d device(s), %d energy meter(s) active. Press Ctrl-C to stop.",
+        len(devices), len(meters),
     )
     await _wait_for_signal()
 
     logging.info("Shutting down…")
+    for meter in meters:
+        await meter.stop()
     for device in devices:
         await device.stop()
     await bus.stop()

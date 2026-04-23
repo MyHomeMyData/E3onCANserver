@@ -4,7 +4,7 @@ build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "E3onCANserver"
-version = "0.5.3"
+version = "0.6.0"
 description = "A simulator of Viessmann E3-series devices (Vitocal, Vitodens, VX3/Vitocharge) on CAN-bus and via DoIP"
 readme = "README.md"
 license = { text = "Apache 2.0" }
