@@ -1,0 +1,23 @@
+{
+  "vx3": {
+    "tx": "0x6a1",
+    "dpList": "../data/Open3Edatapoints_6a1.py",
+    "prop": "EMCUMASTER",
+    "cyclic": {
+      "tx": "0x451",
+      "messages": [
+        { "did": 506,
+          "schedule": 1,
+          "encoder": { "fct": "localtime", "_args": { "format": "hhmmss" } }
+        }
+      ]
+    }
+  },
+  "energy_meter": {
+    "e380ca_98": {
+      "tx": "0x250",
+      "msg": "00 00 00 00 00 00 00 00",
+      "schedule": 1
+    }
+  }
+}

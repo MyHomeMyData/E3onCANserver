@@ -379,9 +379,11 @@ installation is needed on the host – only Docker.
 | `Dockerfile` | Image definition (Python 3.12-slim + python-can) |
 | `docker-compose.yml` | Shared base configuration |
 | `docker-compose.can.yml` | CAN mode override |
+| `docker-compose.can-vcan1.yml` | CAN mode override for a second instance on vcan1 |
 | `docker-compose.doip.yml` | DoIP mode override |
 | `docker/entrypoint.sh` | Startup script, reads environment variables |
-| `docker/start-can.sh` | Convenience wrapper for CAN mode |
+| `docker/start-can.sh` | Convenience wrapper for CAN mode (vcan0) |
+| `docker/start-can-vcan1.sh` | Convenience wrapper for a second CAN instance on vcan1 |
 | `docker/start-doip.sh` | Convenience wrapper for DoIP mode |
 | `.env.example` | Template for environment variable overrides |
 
@@ -447,12 +449,39 @@ sudo ip link set up vcan0
 The CAN mode container uses `--network host` so it can access the host's CAN
 interface directly.
 
+### Running two parallel CAN instances (vcan0 + vcan1)
+
+To simulate devices on two virtual CAN buses simultaneously, start a second
+container using `docker-compose.can-vcan1.yml`. The `-p` flag assigns a
+distinct Docker Compose project name so both instances run independently
+without interfering with each other:
+
+```bash
+# First instance on vcan0 (default)
+./docker/start-can.sh up -d
+
+# Second instance on vcan1
+./docker/start-can-vcan1.sh up -d
+```
+
+The vcan1 instance reads its devices file from `DEVICES_VCAN1` in `.env`
+(default: `config/devices_vcan1.json`). All other settings (`LOG_LEVEL`,
+`DELAY_MS`, `ERROR_PCT`) are shared from `.env`.
+
+To stop each instance independently:
+
+```bash
+./docker/start-can.sh down
+./docker/start-can-vcan1.sh down
+```
+
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `MODE` | `can` | `can` or `doip` |
-| `DEVICES` | `config/devices.json` | Path to devices.json, relative to project root |
+| `DEVICES` | `config/devices.json` | Path to devices.json for vcan0, relative to project root |
+| `DEVICES_VCAN1` | `config/devices_vcan1.json` | Path to devices.json for the vcan1 instance |
 | `CAN_IFACE` | `vcan0` | CAN mode: interface name on the host |
 | `DOIP_ADDR` | `0.0.0.0:13400` | DoIP mode: bind address `[HOST:]PORT` |
 | `DELAY` | `0` | Inter-frame delay in ms (0–200) |
@@ -573,6 +602,7 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
 -->
 ### 0.6.0 (2026-04-23)
 * (MyHomeMyData) Added energy meter simulation (E380 CA, E3100CB) via `energy_meter` section in devices JSON
+* (MyHomeMyData) Added Docker configuration for simultaneous simulation on vcan1 
 
 ### 0.5.3 (2026-04-21)
 * (MyHomeMyData) Added possibility to send DIDs of length zero
