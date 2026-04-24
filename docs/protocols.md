@@ -474,3 +474,160 @@ Write DID `0x044C` (decimal 1100) on the main device (`tx = 0x680`):
 # Server response on 0x692 (= 0x682 + 0x10):
 692   [8]  04 77 04 4C 44 55 55 55       ← SID=77, DID=044C, confirm=0x44
 ```
+
+---
+
+# Energy Meters – E380 CA and E3100CB
+
+Both Viessmann energy meters use a simple raw broadcast protocol: each data
+point is transmitted as a single, self-contained 8-byte CAN frame with no
+framing, segmentation, or flow control. The CAN-ID (E380) or a byte within
+the frame (E3100CB) identifies the data point.
+
+---
+
+## E380 CA
+
+### CAN-ID mapping
+
+The E380 transmits one frame per data point on a dedicated CAN-ID. Up to two
+meters can coexist on the same bus using different CAN addresses:
+
+| CAN address | CAN-ID range | IDs |
+|---|---|---|
+| 97 (default) | `0x250`–`0x25D` | even IDs only |
+| 98 | `0x250`–`0x25D` | odd IDs only |
+
+### Frame structure
+
+Every frame is exactly 8 bytes. All 8 bytes are payload — there is no header:
+
+```
+Byte 0–7:  payload  (encoding depends on the data point, see table below)
+```
+
+The CAN-ID directly identifies the data point.
+
+### Data point reference
+
+| CAN-ID (addr 97 / addr 98) | Data point | Payload encoding |
+|---|---|---|
+| `0x250` / `0x251` | Active Power L1, L2, L3, Total | 4 × Int16s (W) |
+| `0x252` / `0x253` | Reactive Power L1, L2, L3, Total | 4 × Int16s (VA) |
+| `0x254` / `0x255` | Current L1, L2, L3; cosPhi | 3 × Int16s (A) + cosPhi |
+| `0x256` / `0x257` | Voltage L1, L2, L3; Frequency | 3 × Int16s (V) + Int16 (/100 → Hz) |
+| `0x258` / `0x259` | Cumulated Import, Export | 2 × Float32 (/1000 → kWh) |
+| `0x25A` / `0x25B` | Total Active Power, Total Reactive Power | 2 × Int32s (/10, W / VA) |
+| `0x25C` / `0x25D` | Cumulated Import | Int32 (/100 → kWh) + 4 bytes unused |
+
+### Payload encodings
+
+All multi-byte integers are little-endian.
+
+**Int16s** (signed, scale 1): two's complement, 2 bytes, unit as stated.
+
+**Int32s** (signed, scale 10): two's complement, 4 bytes, divide by 10 for
+physical value.
+
+**Float32**: IEEE 754 single-precision float, 4 bytes, divide by 1000 for
+physical value in kWh.
+
+**cosPhi** (2 bytes, scale 100):
+```
+Byte 0:  sign indicator  (0x04 = negative, any other = positive)
+Byte 1:  absolute value  (divide by 100 for physical value)
+```
+
+### Example
+
+Active Power frame from meter at CAN address 97 (`0x250`):
+
+```
+can0  250   [8]  60 00  F7 FF  94 FF  FC FF
+                 └─L1─┘ └─L2─┘ └─L3─┘ └Tot┘
+```
+
+Decoded (signed Int16, scale 1):
+- L1   = `0x0060` = 96 W
+- L2   = `0xFFF7` = −9 W
+- L3   = `0xFF94` = −108 W
+- Total = `0xFFFC` = −4 W
+
+---
+
+## E3100CB
+
+### CAN-ID
+
+The E3100CB always transmits on a single fixed CAN-ID:
+
+| Direction | CAN-ID |
+|---|---|
+| E3100CB → bus | `0x569` |
+
+### Frame structure
+
+Every frame is exactly 8 bytes. Byte 3 acts as the data point discriminator;
+bytes 4–7 carry the 4-byte payload. Bytes 0–2 are unused:
+
+```
+Byte 0–2:  unused / ignored
+Byte 3:    data point index  (decimal, 01–17; forms the DID suffix)
+Byte 4–7:  payload           (4 bytes, encoding depends on data point)
+```
+
+The logical DID is formed as `1385.<byte3>`, e.g. byte 3 = `0x04` → DID `1385.04`.
+
+### Data point reference
+
+| Byte 3 | DID | Data point | Payload encoding |
+|---|---|---|---|
+| `0x01` | 1385.01 | Cumulated Import | Float32 (/1000 → kWh) |
+| `0x02` | 1385.02 | Cumulated Export | Float32 (/1000 → kWh) |
+| `0x03` | 1385.03 | Operation State | State byte (see below) |
+| `0x04` | 1385.04 | Active Power Total | Int16s (W) |
+| `0x05` | 1385.05 | Reactive Power Total | Int16s (var) |
+| `0x06` | 1385.06 | Current L1 (absolute) | Int16s (A) |
+| `0x07` | 1385.07 | Voltage L1 | UInt32 (V) |
+| `0x08` | 1385.08 | Active Power L1 | Int16s (W) |
+| `0x09` | 1385.09 | Reactive Power L1 | Int16s (var) |
+| `0x0A` | 1385.10 | Current L2 (absolute) | Int16s (A) |
+| `0x0B` | 1385.11 | Voltage L2 | UInt32 (V) |
+| `0x0C` | 1385.12 | Active Power L2 | Int16s (W) |
+| `0x0D` | 1385.13 | Reactive Power L2 | Int16s (var) |
+| `0x0E` | 1385.14 | Current L3 (absolute) | Int16s (A) |
+| `0x0F` | 1385.15 | Voltage L3 | UInt32 (V) |
+| `0x10` | 1385.16 | Active Power L3 | Int16s (W) |
+| `0x11` | 1385.17 | Reactive Power L3 | Int16s (var) |
+
+### Payload encodings
+
+All multi-byte integers are little-endian.
+
+**Int16s** (signed, scale 1): two's complement, 2 bytes (bytes 4–5 used,
+bytes 6–7 unused).
+
+**UInt32** (unsigned, scale 1): 4 bytes (bytes 4–7).
+
+**Float32**: IEEE 754 single-precision float, 4 bytes (bytes 4–7), divide by
+1000 for physical value in kWh.
+
+**State byte** (byte 4 only):
+```
+0x00  →  +1  (supply, drawing from grid)
+0x04  →  −1  (feed-in, exporting to grid)
+other →   0  (undefined)
+```
+
+### Example
+
+Active Power Total frame (DID 1385.04):
+
+```
+can0  569   [8]  XX XX XX  04  D0 07  00 00
+                            │   └──────┘
+                            │   payload (bytes 4–5)
+                            └── data point index
+```
+
+Decoded (signed Int16, scale 1): `0x07D0` = 2000 W.

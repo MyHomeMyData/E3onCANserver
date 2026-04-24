@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.5.3 – Added DIDs of length zero**
+**v0.6.0 – Energy meter simulation**
 
 | Feature | Status |
 |---|---|
@@ -23,6 +23,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 | Multiple parallel devices | ✅ |
 | Dynamic value generation | 🔜 planned |
 | Cyclic unsolicited TX (Collect protocol) | ✅ |
+| Energy meter simulation (E380 CA, E3100CB) | ✅ |
 | Inter-frame delay | ✅ |
 | Fault injection for robustness testing | ✅ |
 | Viessmann Service 77 write protocol | ✅ |
@@ -93,6 +94,11 @@ Pass the path via `--devices`.  Full example (`config/devices.json`):
         }
       ]
     }
+  },
+  "energy_meter": {
+    "e380ca_97": { "tx": "0x250", "msg": "00 00 00 00 00 00 00 00", "schedule": 1 },
+    "e380ca_98": { "tx": "0x251", "msg": "00 00 00 00 00 00 00 00", "schedule": 1 },
+    "e3100cb":   { "tx": "0x569", "msg": "00 00 00 04 00 00 00 00", "schedule": 1 }
   }
 }
 ```
@@ -106,6 +112,7 @@ Pass the path via `--devices`.  Full example (`config/devices.json`):
 | `errors` | Fault injection rate in % for UDS responses (0.0–20.0, optional). Overrides `--errors`. |
 | `service77` | List of DID integers protected against normal WriteDataByIdentifier (optional). These DIDs can only be written via Service 77. |
 | `cyclic` | Specification of unsolicited, cyclically sent messages (optional) |
+| `energy_meter` | Optional section. Each entry sends a fixed raw CAN frame at a fixed interval (see below). |
 
 The simulator responds on `tx + 0x10` (e.g. requests on `0x680` → responses on `0x690`).
 
@@ -128,6 +135,7 @@ Lines starting with `#` are comments.
 ```
 
 Use of delimiter between bytes is optional.
+A line with only a DID number (no bytes, or only trailing spaces) defines a DID with zero-length payload.
 
 ## Usage
 
@@ -230,6 +238,25 @@ Configuration is via the `cyclic` block in devices.json. Two encoder types are a
 | `raw` | Sends the value stored for the DID, or an optional fixed hex string |
 | `localtime` | Sends the current local time as 3 bytes `[HH, MM, SS]` |
 
+### Energy meter simulation (E380 CA, E3100CB)
+
+Viessmann energy meters broadcast fixed 8-byte raw CAN frames at a regular
+interval without any protocol framing.  The simulator reproduces this behaviour
+via the optional `energy_meter` section in the devices JSON file.
+
+Each entry under `energy_meter` defines one simulated meter:
+
+| Key | Description |
+|---|---|
+| `tx` | CAN-ID on which the frame is broadcast (hex string) |
+| `msg` | Fixed 8-byte payload as space-separated hex bytes |
+| `schedule` | Broadcast interval in seconds |
+
+If the `energy_meter` section is absent or empty, no energy meters are started.
+Energy meter simulation is CAN-only; it is not available in DoIP mode.
+
+See `docs/protocols.md` for the E380 CA and E3100CB frame format details.
+
 ## DoIP mode
 
 DoIP (Diagnostics over IP, ISO 13400) allows UDS clients to communicate with
@@ -270,6 +297,7 @@ The ECU address (`-tx`) must match the `tx` value in `devices.json`.
 | Inter-frame delay (`--delay`) | ✅ |
 | Service 77 write protocol | ❌ (CAN-only) |
 | Cyclic unsolicited TX (Collect) | ❌ (CAN-only) |
+| Energy meter simulation | ❌ (CAN-only) |
 
 ### DoIP protocol details
 
@@ -351,9 +379,11 @@ installation is needed on the host – only Docker.
 | `Dockerfile` | Image definition (Python 3.12-slim + python-can) |
 | `docker-compose.yml` | Shared base configuration |
 | `docker-compose.can.yml` | CAN mode override |
+| `docker-compose.can-vcan1.yml` | CAN mode override for a second instance on vcan1 |
 | `docker-compose.doip.yml` | DoIP mode override |
 | `docker/entrypoint.sh` | Startup script, reads environment variables |
-| `docker/start-can.sh` | Convenience wrapper for CAN mode |
+| `docker/start-can.sh` | Convenience wrapper for CAN mode (vcan0) |
+| `docker/start-can-vcan1.sh` | Convenience wrapper for a second CAN instance on vcan1 |
 | `docker/start-doip.sh` | Convenience wrapper for DoIP mode |
 | `.env.example` | Template for environment variable overrides |
 
@@ -419,12 +449,39 @@ sudo ip link set up vcan0
 The CAN mode container uses `--network host` so it can access the host's CAN
 interface directly.
 
+### Running two parallel CAN instances (vcan0 + vcan1)
+
+To simulate devices on two virtual CAN buses simultaneously, start a second
+container using `docker-compose.can-vcan1.yml`. The `-p` flag assigns a
+distinct Docker Compose project name so both instances run independently
+without interfering with each other:
+
+```bash
+# First instance on vcan0 (default)
+./docker/start-can.sh up -d
+
+# Second instance on vcan1
+./docker/start-can-vcan1.sh up -d
+```
+
+The vcan1 instance reads its devices file from `DEVICES_VCAN1` in `.env`
+(default: `config/devices_vcan1.json`). All other settings (`LOG_LEVEL`,
+`DELAY_MS`, `ERROR_PCT`) are shared from `.env`.
+
+To stop each instance independently:
+
+```bash
+./docker/start-can.sh down
+./docker/start-can-vcan1.sh down
+```
+
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `MODE` | `can` | `can` or `doip` |
-| `DEVICES` | `config/devices.json` | Path to devices.json, relative to project root |
+| `DEVICES` | `config/devices.json` | Path to devices.json for vcan0, relative to project root |
+| `DEVICES_VCAN1` | `config/devices_vcan1.json` | Path to devices.json for the vcan1 instance |
 | `CAN_IFACE` | `vcan0` | CAN mode: interface name on the host |
 | `DOIP_ADDR` | `0.0.0.0:13400` | DoIP mode: bind address `[HOST:]PORT` |
 | `DELAY` | `0` | Inter-frame delay in ms (0–200) |
@@ -467,6 +524,7 @@ E3onCANserver/
 │   ├── cyclic.py           # Unsolicited broadcast scheduler for one device
 │   ├── datastore.py        # Per-device datapoint storage (dict + resolver API)
 │   ├── device.py           # SimulatedDevice: UDS + Service 77 + cyclic workers
+│   ├── energy_meter.py     # Periodic raw-frame broadcaster for energy meter simulation
 │   ├── faults.py           # Delay and fault injection for UDS / Service 77 responses
 │   └── protocol/
 │       ├── base.py         # Abstract ProtocolHandler base class
@@ -542,6 +600,10 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### 0.6.0 (2026-04-23)
+* (MyHomeMyData) Added energy meter simulation (E380 CA, E3100CB) via `energy_meter` section in devices JSON
+* (MyHomeMyData) Added Docker configuration for simultaneous simulation on vcan1 
+
 ### 0.5.3 (2026-04-21)
 * (MyHomeMyData) Added possibility to send DIDs of length zero
 

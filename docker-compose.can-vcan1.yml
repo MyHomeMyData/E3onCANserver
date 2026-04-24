@@ -1,0 +1,19 @@
+# docker-compose.can-vcan1.yml – CAN mode override for a second instance on vcan1.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.can.yml -f docker-compose.can-vcan1.yml up
+#
+# Or use the convenience wrapper:
+#   ./docker/start-can-vcan1.sh up -d
+#
+# Prerequisites on the host:
+#   sudo modprobe vcan
+#   sudo ip link add dev vcan1 type vcan
+#   sudo ip link set up vcan1
+
+services:
+  e3oncanserver:
+    container_name: e3oncanserver-vcan1
+    environment:
+      CAN_CHANNEL:  vcan1
+      DEVICES_FILE: /app/${DEVICES_VCAN1:-config/devices_vcan1.json}
