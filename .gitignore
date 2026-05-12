@@ -11,6 +11,6 @@ venv/
 .env
 
 # my config files:
-docker-compose.can-vcan1-r15.yml
-docker/start-can-vcan1-r15.sh
+docker-compose.can-*-r15.yml
+docker/start-can-*-r15.sh
 .local_data/
