@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.6.0 – Energy meter simulation**
+**v0.6.1 – Service 77 frame format correction**
 
 | Feature | Status |
 |---|---|
@@ -205,13 +205,22 @@ A proprietary Viessmann write protocol, discovered via reverse engineering. It o
 
 The offset is always `+0x02` for requests and `+0x12` for responses.
 
-**Frame format:**
+**Frame format** (ISO-TP reassembled payload):
 
 ```
-Request:           [0x77] [DID_HIGH] [DID_LOW] [DATA ...]
-Positive response: [0x77] [0x04]     [DID_HIGH] [DID_LOW]
+Request (9+ bytes):
+  Byte 0:    0x77
+  Bytes 1–2: DID_HIGH, DID_LOW   (CTR field; e3oncan encodes the DID big-endian here)
+  Bytes 3–5: 0x43 0x01 0x82      (fixed Client ID, ignored by the server)
+  Bytes 6–7: DID_LOW, DID_HIGH   (DID little-endian — authoritative)
+  Byte  8:   length code         (low nibble = data length in bytes)
+  Bytes 9+:  DATA
+
+Positive response: [0x77] [DID_HIGH] [DID_LOW] [0x44]
 Negative response: [0x7F] [0x77]     [NRC]
 ```
+
+The server does not validate the CTR field. Since e3oncan places the DID bytes (big-endian) in the CTR field, the positive response effectively echoes the DID.
 
 **Protection list (`service77` key in devices.json):**
 
@@ -600,6 +609,10 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### 0.6.1 (2026-05-12)
+* (MyHomeMyData) Corrected Service 77 request frame format: DID is little-endian at bytes 6–7; bytes 1–2 carry the CTR field (e3oncan encodes the DID there). Updated tests and documentation accordingly.
+* (MyHomeMyData) Corrected Collect protocol documentation: only the low nibble of the length byte determines payload length; high nibble `0x8x` and `0xBx` are both valid on real hardware.
+
 ### 0.6.0 (2026-04-23)
 * (MyHomeMyData) Added energy meter simulation (E380 CA, E3100CB) via `energy_meter` section in devices JSON
 * (MyHomeMyData) Added Docker configuration for simultaneous simulation on vcan1 

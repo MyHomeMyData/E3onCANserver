@@ -54,15 +54,21 @@ frame type:
 
 | Byte 3 (`v3`) | Byte 4 (`v4`) | Type | Payload length | Payload starts at |
 |---|---|---|---|---|
-| `0xB1`–`0xB4` | any | Single Frame | `v3 − 0xB0` (1–4 bytes) | Byte 4 |
-| `0xB5`–`0xBF` | any | Multi Frame | `v3 − 0xB0` (5–15 bytes) | Byte 4 |
-| `0xB0` | ≠ `0xC1` | Multi Frame | `v4` (16–255 bytes) | Byte 5 |
-| `0xB0` | `0xC1` | Multi Frame | Byte 5 (`v5`) | Byte 6 |
+| low nibble 1–4 | any | Single Frame | low nibble of `v3` (1–4 bytes) | Byte 4 |
+| low nibble 5–F | any | Multi Frame | low nibble of `v3` (5–15 bytes) | Byte 4 |
+| low nibble 0 | ≠ `0xC1` | Multi Frame | `v4` (16–255 bytes) | Byte 5 |
+| low nibble 0 | `0xC1` | Multi Frame | Byte 5 (`v5`) | Byte 6 |
 
-The `0xC1` escape in the last row is used when the payload length value itself
-would equal `0xB5` or `0xC1`, to avoid ambiguity with those special byte
-values. In practice this has been observed for a payload length of `0xB5`
-(181 bytes).
+**Length encoding rule:** the payload length is always the **low nibble** of
+byte 3 (`v3 & 0x0F`). The high nibble is ignored for length purposes.
+Observed high-nibble values include `0x8` and `0xB`; both encode the same
+lengths (e.g. `0x82` and `0xB2` both mean 2 bytes).
+
+Low nibble = 0 signals a two-byte length field: the actual length is in
+byte 4 (`v4`), except when `v4 = 0xC1`, which is an escape byte — the true
+length is then in byte 5 (`v5`). The `0xC1` escape avoids ambiguity when the
+payload length value itself would equal `0xB5` or `0xC1`. In practice this
+has been observed for a payload length of `0xB5` (181 bytes).
 
 ---
 
@@ -415,31 +421,38 @@ Service 77 uses the same ISO 15765-2 (ISO-TP) framing as UDS. The reassembled pa
 
 ### Request frame format
 
+After ISO-TP reassembly the payload has this structure:
+
 ```
-[0x77] [DID_HIGH] [DID_LOW] [PREFIX_0] [PREFIX_1] [PREFIX_2] [PREFIX_3] [PREFIX_4] [PREFIX_5] [DATA ...]
+Byte 0:     0x77
+Bytes 1–2:  [CTR_L] [CTR_H]
+Bytes 3–5:  0x43 0x01 0x82
+Bytes 6–7:  [DID_L] [DID_H]
+Byte  8:    0xB0 + n
+Bytes 9+:   [DATA ...]
 ```
 
 | Field | Bytes | Description |
 |---|---|---|
 | Service ID | 1 | Always `0x77` |
-| DID | 2 | Data identifier, big-endian (high byte first) |
-| Prefix | 6 | Client-specific prefix bytes, content not known; ignored by the server |
-| Data | n | New value for the data point |
-
-The 6-byte prefix is present in every request. Its content is not known in detail and is not stored.
+| Session counter | 2 | 16-bit little-endian counter; monotonically increasing across all writes in a session (~0.35 increments/s), wraps at 0xFFFF |
+| Client ID | 3 | Fixed bytes `43 01 82`; constant across all observed frames |
+| DID | 2 | Data identifier, **little-endian** (low byte first) |
+| Length code | 1 | Low nibble = data length in bytes (same encoding as Collect protocol). Both `0x8x` and `0xBx` high nibbles are observed in practice (e.g. `0x82` and `0xB2` both mean 2 bytes). Low nibble 0 means the next byte carries the length (≥ 16 bytes). |
+| Data | n | New value for the data point, little-endian |
 
 ### Response frame format
 
 Positive response:
 
 ```
-[0x77] [DID_HIGH] [DID_LOW] [0x44]
+[0x77] [CTR_L] [CTR_H] [0x44]
 ```
 
 | Field | Bytes | Description |
 |---|---|---|
 | Service ID | 1 | Always `0x77` |
-| DID | 2 | Data identifier echoed from request (high byte first) |
+| Session counter | 2 | 16-bit LE counter **echoed from the request** (not the DID) |
 | Confirmation byte | 1 | Always `0x44` (Viessmann-specific, no UDS equivalent) |
 
 Negative response (reuses UDS encoding):
@@ -463,17 +476,169 @@ The `service77` key in `devices.json` specifies a list of DIDs that are protecte
 
 ### Example exchange
 
-Write DID `0x044C` (decimal 1100) on the main device (`tx = 0x680`):
+Write DID `0x044C` (decimal 1100) with 2-byte value `0x012C` on the main device (`tx = 0x680`).
+Session counter at this point: `0x0042`.
+
+The reassembled UDS payload is 11 bytes, so ISO-TP multi-frame is used:
 
 ```
 # Client request on 0x682 (= 0x680 + 0x02):
-682   [8]  07 77 04 4C AA BB CC DD EE FF  ← SID=77, DID=044C, 6-byte prefix, data=AA BB CC
+#                   ISO-TP FF (len=11)
+682  [8]  10 0B  77  42 00  43 01 82
+#                ↑   ↑───↑  ↑──────↑
+#                SID CTR   Client ID
 
-# (ISO-TP framing applies for payloads > 7 bytes; shown here as single frame for brevity)
+#                   ISO-TP CF1
+682  [8]  21  4C 04  B2  2C 01  CC CC
+#             ↑────↑ ↑   ↑────↑
+#             DID LE len  data LE
+
+# Device sends Flow Control first (standard ISO-TP):
+692  [8]  30 00 00 00 00 00 00 00
 
 # Server response on 0x692 (= 0x682 + 0x10):
-692   [8]  04 77 04 4C 44 55 55 55       ← SID=77, DID=044C, confirm=0x44
+692  [8]  04  77  42 00  44  CC CC CC
+#             ↑   ↑────↑  ↑
+#             SID CTR     confirm=0x44
 ```
+
+Notes:
+- DID `0x044C` is transmitted as `4C 04` (LE), not `04 4C` (BE).
+- The response echoes the session counter `42 00`, not the DID.
+- `0xB2` indicates 2 data bytes (low nibble = 2). `0x82` is equally valid and observed on real hardware.
+
+### Device-initiated Service 77 (CTR = 0x0000)
+
+The device can initiate Service 77 frames toward the client, always with
+session counter `0x0000`. Two distinct patterns have been observed:
+
+**Pattern A — Cross-device synchronization (echo)**
+
+When a client writes a value, the device immediately propagates that write to
+all other known devices using the same CAN-ID offset. The payload (DID + data)
+is identical to the client's write; only the counter is reset to zero.
+Confirmed across multiple traces and DIDs (e.g. `0x01F8`, `0x044D`).
+
+Example: client `0x682` writes DID `0x01F8`. Immediately after confirming,
+device `0x692` pushes the same DID/data back to `0x682`, and simultaneously
+`0x693` pushes the identical frame to `0x683`:
+
+```
+# Client write
+682  10 17 77 0D 00 43 01 82   ← FF, CTR=0x000D
+...
+692  04 77 0D 00 44 55 55 55   ← confirm, CTR=0x000D ✓
+
+# Immediate cross-device sync (CTR=0x0000 in both)
+692  10 17 77 00 00 43 01 82   ← device pushes same DID back to 682
+693  10 17 77 00 00 43 01 82   ← sibling device pushes to 683 simultaneously
+```
+
+**Pattern B — Related-value notification**
+
+After processing a write, the device pushes back a set of related DIDs whose
+values were affected by (or are logically associated with) the write. These
+pushed DIDs are different from the written DID.
+
+Example: client `0x441` writes DID `0x08B2` (2226). Before sending the
+confirmation, device `0x451` pushes back four related DIDs:
+
+| Pushed DID | Decimal | Data bytes |
+|---|---|---|
+| `0x0643` | 1603 | 4 |
+| `0x069A` | 1690 | 17 |
+| `0x0720` | 1824 | 16 |
+| `0x072C` | 1836 | 4 |
+
+The confirmation (`0x44`) for the original write arrives *after* all the
+device-initiated pushes have been sent. This pattern is reproducible: the same
+four DIDs are pushed on every write cycle to DID `0x08B2`, with data values
+that reflect the current device state at the time of the push.
+
+For large pushed payloads the ISO-TP sequence number wraps normally
+(`0x2F → 0x20`). Payloads up to 123 bytes (19 CFs) have been observed for
+device-initiated pushes on some DID/channel combinations.
+
+**Summary: how to identify device-initiated frames**
+
+| Field | Client write | Device push |
+|---|---|---|
+| CTR | Running counter (≠ 0) | Always `0x0000` |
+| Direction | REQUEST_CH → RESPONSE_CH | RESPONSE_CH → REQUEST_CH |
+| DID | What the client wants to write | Echo of client's DID (Pattern A) or related DID (Pattern B) |
+
+### Anomaly: 4-byte Service 77 frames
+
+On multiple CAN-ID pairs, 4-byte Service 77 frames have been observed that
+are too short to carry a DID or data:
+
+```
+681  04 77 C9 11 21 00 00 00   ← client-side (00 padding)
+691  04 77 C9 11 22 55 55 55   ← device-side (55 padding), ~3 ms later
+
+682  04 77 41 75 21 55 55 55   ← client-side (55 padding)
+692  04 77 41 75 22 55 55 55   ← device-side (55 padding), 1 ms later
+
+683  04 77 D4 11 21 00 00 00   ← client-side (00 padding)
+693  04 77 D4 11 22 55 55 55   ← device-side (55 padding), 14 ms later
+
+686  04 77 08 6F 21 CC CC CC   ← client-side (CC padding)
+696  04 77 08 6F 22 55 55 55   ← device-side (55 padding), 1 ms later
+```
+
+Payload: `[0x77] [CTR_L] [CTR_H] [0x21]` (client) / `[0x77] [CTR_L] [CTR_H] [0x22]` (device)
+
+Observations:
+
+- `0x21` / `0x22` are consistent across all four channel pairs.
+- The CTR in each pair is always the global session counter incremented by
+  exactly 1 after the preceding write on that same channel (e.g. CTR=0x7540
+  for a write, CTR=0x7541 for the 4-byte frame immediately after).
+- The CAN padding byte on the **client** side is inconsistent: `0x00` on
+  channels 681 and 683, `0x55` on 682, `0xCC` on 686. The device side always
+  pads with `0x55`. This suggests the frames originate from different software
+  components or firmware generations.
+- These frames appear between write batches on all active channels, not only
+  after specific writes.
+
+**Hypothesis:** byte 3 = `0x21` / `0x22` is a session-level keepalive or
+commit signal, sent by the client after each write (or write batch) to confirm
+that no further writes are pending in this slot, with the device acknowledging.
+The CTR+1 spacing supports this: the client "spends" one CTR value on the
+keepalive before moving to the next write cycle.
+
+### CAN-ID sharing and protocol disambiguation
+
+CAN-IDs `0x451` (Vitocharge VX3) and `0x693` (Vitocal 250) are shared between
+the Collect protocol and the Service 77 response channel. Both protocols produce
+frames with sequence byte `0x21` as byte 0, making raw inspection ambiguous.
+
+**Disambiguation rule (ISO-TP state tracking):**
+
+A frame with byte 0 = `0x21` on `0x451` or `0x693` is:
+
+- **Service 77 CF1** — if a First Frame (`0x1x`) from the same CAN-ID has
+  been seen without a matching `0x21` CF1 consuming it yet.
+- **Collect start frame (FF)** — if no ISO-TP FF is currently open for that
+  CAN-ID.
+
+An implementation must maintain one boolean flag per CAN-ID: "FF open".
+Set it on `0x1x`; clear it on `0x21` (CF1 consumed) or `0x2x` for x > 1.
+
+**Operational modes:**
+
+In practice the two protocols appear to be functionally exclusive by mode:
+
+| Mode | Dominant protocol |
+|---|---|
+| Normal operation (passive/read-only) | Collect autonomous broadcasts |
+| Active service session (writes in progress) | Service 77 device-initiated pushes |
+
+Both distribute the same underlying data-point values. Service 77 device pushes
+are addressed to specific client channels (with ISO-TP ACK); Collect broadcasts
+are unaddressed and require no flow control. A receiver handling both protocols
+on the same CAN-ID will typically observe one or the other depending on whether
+a write session is active on the bus.
 
 ---
 

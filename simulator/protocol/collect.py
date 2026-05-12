@@ -20,10 +20,12 @@ First-frame layout (v0 = 0x21):
   v4..v7  : start of payload (or extended length fields)
 
 Length encoding (v3):
-  0xB1..0xBF  payload length = v3 - 0xB0  (1..15 bytes); payload starts at v4
-  0xB0        length ≥ 16 or in escape list (0xB5, 0xC1):
-                if v4 == 0xC1: payload length = v5; payload starts at v6
-                else:          payload length = v4; payload starts at v5
+  Only the low nibble of v3 carries the length; the high nibble is ignored.
+  Real hardware uses high nibbles 0x8 and 0xB; the simulator always sends 0xB.
+  Low nibble 1..F: payload length = v3 & 0x0F (1..15 bytes); payload starts at v4
+  Low nibble 0:    length ≥ 16 or in escape list (0xB5, 0xC1):
+                     if v4 == 0xC1: payload length = v5; payload starts at v6
+                     else:          payload length = v4; payload starts at v5
 
 Padding: the last frame is padded with 0x55 to 8 bytes.
 
