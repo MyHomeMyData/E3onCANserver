@@ -128,6 +128,18 @@ class TestService77Handler:
         resp = h.handle(req, s)
         assert resp[0] == SID_NEGATIVE_RESP
 
+    def test_write_without_length_code(self):
+        """Byte 8 with high nibble < 0x8 is the first data byte, not a length code."""
+        h = Service77Handler()
+        s = make_store()
+        # DID 700 (0x02BC): CTR=02 BC, ClientID=43 01 82, DID_LE=BC 02, data=0x2B (no len code)
+        # 0x2B has high nibble 2 < 8 → byte 8 is the data byte itself
+        req = bytes([0x77, 0x02, 0xBC, 0x43, 0x01, 0x82, 0xBC, 0x02, 0x2B])
+        resp = h.handle(req, s)
+        assert resp[0] == SID_SERVICE77
+        assert resp[3] == S77_CONFIRM_BYTE
+        assert s.read(700) == bytes([0x2B])
+
     def test_writes_protected_did_without_restriction(self):
         """Service 77 ignores the protection list – it has no concept of it."""
         h = Service77Handler()

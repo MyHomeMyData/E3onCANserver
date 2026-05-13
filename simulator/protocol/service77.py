@@ -27,9 +27,10 @@ Request (reassembled ISO-TP payload, 9+ bytes):
                                        big-endian here instead of a counter)
     Bytes 3-5: 0x43 0x01 0x82         (fixed Client ID, ignored by server)
     Bytes 6-7: [DID_LOW] [DID_HIGH]   (DID little-endian – authoritative)
-    Byte  8:   length code            (low nibble = data length, same encoding
-                                       as Collect protocol)
-    Bytes 9+:  DATA
+    Byte  8:   length code or data     (if high nibble >= 0x8: length code,
+                                       data starts at byte 9; otherwise this
+                                       byte is the first data byte itself)
+    Bytes 9+:  DATA (only when byte 8 is a length code)
 
 Positive response:
     [0x77] [DID_HIGH] [DID_LOW] [0x44]
@@ -146,7 +147,13 @@ class Service77Handler(ProtocolHandler):
             return _negative_response(SID_SERVICE77, NRC_SUBFUNCTION_NOT_SUPPORTED)
 
         did  = payload[6] | (payload[7] << 8)   # DID little-endian at bytes 6-7
-        data = payload[9:]                       # byte 8 is length code; data follows
+        # Byte 8 is a length code only when its high nibble is >= 0x8 (0x8x or 0xBx).
+        # Otherwise the byte is the first data byte (observed for small values whose
+        # high nibble < 0x8, e.g. a 1-byte value of 0x2B).
+        if (payload[8] & 0xF0) >= 0x80:
+            data = payload[9:]  # length code present; data starts at byte 9
+        else:
+            data = payload[8:]  # no length code; byte 8 is first data byte
 
         success = store.write(did, data)
         if not success:

@@ -213,8 +213,9 @@ Request (9+ bytes):
   Bytes 1–2: DID_HIGH, DID_LOW   (CTR field; e3oncan encodes the DID big-endian here)
   Bytes 3–5: 0x43 0x01 0x82      (fixed Client ID, ignored by the server)
   Bytes 6–7: DID_LOW, DID_HIGH   (DID little-endian — authoritative)
-  Byte  8:   length code         (low nibble = data length in bytes)
-  Bytes 9+:  DATA
+  Byte  8:   length code or data  (if high nibble ≥ 0x8: length code, data at byte 9+;
+                                   otherwise byte 8 is the first data byte itself)
+  Bytes 9+:  DATA (only when byte 8 is a length code)
 
 Positive response: [0x77] [DID_HIGH] [DID_LOW] [0x44]
 Negative response: [0x7F] [0x77]     [NRC]

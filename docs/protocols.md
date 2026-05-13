@@ -60,7 +60,8 @@ frame type:
 | low nibble 0 | `0xC1` | Multi Frame | Byte 5 (`v5`) | Byte 6 |
 
 **Length encoding rule:** the payload length is always the **low nibble** of
-byte 3 (`v3 & 0x0F`). The high nibble is ignored for length purposes.
+byte 3 (`v3 & 0x0F`). The high nibble is irrelevant for length purposes;
+byte 3 at this position is always a length code.
 Observed high-nibble values include `0x8` and `0xB`; both encode the same
 lengths (e.g. `0x82` and `0xB2` both mean 2 bytes).
 
@@ -96,7 +97,7 @@ Device                          Listener
 #        seq  DID       len  payload
 can0  693 [8]  21  BE 09  B4  95 0E 00 00
 ```
-`v3 = 0xB4` → length = `0xB4 − 0xB0` = 4. Payload: `95 0E 00 00`.
+`v3 = 0xB4` → low nibble = 4 → length = 4. Payload: `95 0E 00 00`.
 
 ---
 
@@ -107,8 +108,8 @@ can0  693 [8]  21  BE 09  B4  95 0E 00 00
 can0  693 [8]  21 1A 01 B9 90 01 D4 00
 can0  693 [8]  22 E5 01 82 01 00 55 55
 ```
-`v3 = 0xB9` → length = 9. Payload bytes 1–4 start at byte 4 of frame 1,
-bytes 5–9 follow in frame 2 (last 2 bytes are padding).
+`v3 = 0xB9` → low nibble = 9 → length = 9. Payload bytes 1–4 start at byte 4
+of frame 1, bytes 5–9 follow in frame 2 (last 2 bytes are padding).
 
 ---
 
@@ -438,7 +439,7 @@ Bytes 9+:   [DATA ...]
 | Session counter | 2 | 16-bit little-endian counter; monotonically increasing across all writes in a session (~0.35 increments/s), wraps at 0xFFFF |
 | Client ID | 3 | Fixed bytes `43 01 82`; constant across all observed frames |
 | DID | 2 | Data identifier, **little-endian** (low byte first) |
-| Length code | 1 | Low nibble = data length in bytes (same encoding as Collect protocol). Both `0x8x` and `0xBx` high nibbles are observed in practice (e.g. `0x82` and `0xB2` both mean 2 bytes). Low nibble 0 means the next byte carries the length (≥ 16 bytes). |
+| Length code | 1 | Present only when the high nibble is ≥ `0x8` (observed: `0x8x` and `0xBx`). Low nibble = data length in bytes (e.g. `0x82` and `0xB2` both mean 2 bytes). Low nibble 0 means the next byte carries the length (≥ 16 bytes). **If the byte at this position has high nibble < `0x8`, it is not a length code — the remaining payload bytes including that byte are raw data** (observed for small data points, e.g. a 1-byte value of `0x2B`). |
 | Data | n | New value for the data point, little-endian |
 
 ### Response frame format
@@ -558,6 +559,23 @@ that reflect the current device state at the time of the push.
 For large pushed payloads the ISO-TP sequence number wraps normally
 (`0x2F → 0x20`). Payloads up to 123 bytes (19 CFs) have been observed for
 device-initiated pushes on some DID/channel combinations.
+
+**Short pushes (1-byte data, no length code prefix):** For data points with a
+1-byte value whose byte representation has high nibble < `0x8`, the reassembled
+S77 payload is exactly 9 bytes (8-byte header + 1 data byte) and the data byte
+sits at position 8 without a preceding length code. Example:
+
+```
+# ISO-TP FF (total = 9 bytes)
+692  [8]  10 09  77 00 00 43 01 82
+# ISO-TP CF1 (need 3 more bytes: EF 06 2B)
+692  [8]  21  EF 06  2B  55 55 55 55
+#              ↑────↑  ↑
+#              DID LE  data = 0x2B (43 decimal)
+```
+
+Reassembled: `77 00 00 43 01 82 EF 06 2B` — DID `0x06EF`, 1-byte value `0x2B`.
+There is no length code byte; `0x2B` (high nibble `2` < `0x8`) is the value itself.
 
 **Summary: how to identify device-initiated frames**
 
