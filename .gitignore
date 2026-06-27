@@ -14,3 +14,6 @@ venv/
 docker-compose.can-*-r15.yml
 docker/start-can-*-r15.sh
 .local_data/
+
+# Claude Code: project settings are shared, local overrides are personal
+.claude/settings.local.json

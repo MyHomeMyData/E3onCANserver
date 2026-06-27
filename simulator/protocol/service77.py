@@ -21,16 +21,28 @@ For a device whose UDS request address is ``tx_id``:
 
 Frame format
 ------------
-Request:
-    [0x77] [DID_HIGH] [DID_LOW] [6 BYTES PREFIX] [DATA ...]
+Request (reassembled ISO-TP payload, 9+ bytes):
+    Byte 0:    0x77                   (Service ID)
+    Bytes 1-2: [DID_HIGH] [DID_LOW]   (CTR field; e3oncan encodes the DID
+                                       big-endian here instead of a counter)
+    Bytes 3-5: 0x43 0x01 0x82         (fixed Client ID, ignored by server)
+    Bytes 6-7: [DID_LOW] [DID_HIGH]   (DID little-endian – authoritative)
+    Byte  8:   length code or data     (if high nibble >= 0x8: length code,
+                                       data starts at byte 9; otherwise this
+                                       byte is the first data byte itself)
+    Bytes 9+:  DATA (only when byte 8 is a length code)
 
 Positive response:
-    [0x77] [0x04] [DID_HIGH] [DID_LOW]
+    [0x77] [DID_HIGH] [DID_LOW] [0x44]
+
+    Bytes 1-2 echo payload[1:3].  Since e3oncan places DID_HIGH and DID_LOW
+    in the CTR field, the response effectively echoes the DID big-endian.
+    The server must not validate the CTR value.
 
 Negative response (reuses the UDS encoding):
     [0x7F] [0x77] [NRC]
 
-The confirmation byte 0x04 in the positive response is Viessmann-specific and
+The confirmation byte 0x44 in the positive response is Viessmann-specific and
 has no equivalent in the UDS standard.
 
 Relationship to UDS WriteDataByIdentifier
@@ -109,7 +121,7 @@ class Service77Handler(ProtocolHandler):
         ----------
         payload :
             Fully reassembled bytes from the ISO-TP layer.
-            Expected format: [0x77] [DID_HIGH] [DID_LOW] [DATA ...]
+            Expected format: see module docstring (9+ bytes).
 
         Returns
         -------
@@ -123,19 +135,29 @@ class Service77Handler(ProtocolHandler):
             return None
 
         if payload[0] != SID_SERVICE77:
-            # Should not happen – the bus callback only fires for S77 frames.
-            logger.warning(
-                "[Service77] unexpected service ID 0x%02X (expected 0x77)",
+            # Happens during a UDS device scan: udsoncan probes services on the
+            # Service 77 CAN-ID too, so the SID here is whatever it is probing
+            # (not 0x77). Confirmed against a real Viessmann device: it sends
+            # no response at all in this case (client times out and moves on).
+            logger.debug(
+                "[Service77] unexpected service ID 0x%02X (expected 0x77), "
+                "likely a UDS device scan probe – not responding",
                 payload[0],
             )
-            return _negative_response(payload[0], NRC_SUBFUNCTION_NOT_SUPPORTED)
+            return None
 
-        if len(payload) < 4:
+        if len(payload) < 9:  # SID(1) + CTR(2) + ClientID(3) + DID(2) + LenCode(1)
             logger.debug("[Service77] payload too short (%d bytes)", len(payload))
             return _negative_response(SID_SERVICE77, NRC_SUBFUNCTION_NOT_SUPPORTED)
 
-        did  = (payload[1] << 8) | payload[2]
-        data = payload[9:]  # Service 77 has 6 bytes additional prefix - ignored
+        did  = payload[6] | (payload[7] << 8)   # DID little-endian at bytes 6-7
+        # Byte 8 is a length code only when its high nibble is >= 0x8 (0x8x or 0xBx).
+        # Otherwise the byte is the first data byte (observed for small values whose
+        # high nibble < 0x8, e.g. a 1-byte value of 0x2B).
+        if (payload[8] & 0xF0) >= 0x80:
+            data = payload[9:]  # length code present; data starts at byte 9
+        else:
+            data = payload[8:]  # no length code; byte 8 is first data byte
 
         success = store.write(did, data)
         if not success:
@@ -145,4 +167,6 @@ class Service77Handler(ProtocolHandler):
         logger.debug(
             "[Service77] DID 0x%04X ← %s", did, data.hex(" ")
         )
+        # Echo payload[1:3]: e3oncan stores DID_HIGH, DID_LOW in the CTR field,
+        # so this is effectively [0x77, DID_HIGH, DID_LOW, 0x44].
         return bytes([SID_SERVICE77, payload[1], payload[2], S77_CONFIRM_BYTE])

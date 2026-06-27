@@ -27,8 +27,8 @@ from simulator.protocol.uds import (
     SID_NEGATIVE_RESP,
     NRC_CONDITIONS_NOT_CORRECT,
     NRC_REQUEST_OUT_OF_RANGE,
-    NRC_SUBFUNCTION_NOT_SUPPORTED,
     NRC_SERVICE_NOT_SUPPORTED,
+    NRC_SUBFUNCTION_NOT_SUPPORTED,
 )
 
 
@@ -72,36 +72,37 @@ class TestCanIdOffsets:
 class TestService77Handler:
 
     def test_positive_response_format(self):
-        """[0x77][0x04][DID_HI][DID_LO]"""
+        """[0x77][DID_HI][DID_LO][0x44] — bytes 1-2 echo the CTR field (= DID_H, DID_L per e3oncan)"""
         h = Service77Handler()
         s = make_store()
-        req = bytes([0x77, 0x01, 0x00, 0xAB, 0xCD])  # DID=0x0100, not in store
-        # DID 0x0100 = 256, which IS in our store
-        req = bytes([0x77, 0x01, 0x00, 0xAB, 0xCD])
+        # DID 256 (0x0100): CTR=01 00, ClientID=43 01 82, DID_LE=00 01, len=B2, data=AB CD
+        req = bytes([0x77, 0x01, 0x00, 0x43, 0x01, 0x82, 0x00, 0x01, 0xB2, 0xAB, 0xCD])
         resp = h.handle(req, s)
         assert resp[0] == SID_SERVICE77
-        assert resp[1] == 0x01   # DID_HI
-        assert resp[2] == 0x00   # DID_LO
+        assert resp[1] == 0x01   # DID_HI (echoed from CTR field)
+        assert resp[2] == 0x00   # DID_LO (echoed from CTR field)
         assert resp[3] == S77_CONFIRM_BYTE
 
     def test_positive_response_length(self):
         h = Service77Handler()
         s = make_store()
-        req = bytes([0x77, 0x01, 0x00, 0xFF])   # DID 256
+        req = bytes([0x77, 0x01, 0x00, 0x43, 0x01, 0x82, 0x00, 0x01, 0xB2, 0xFF, 0xEE])   # DID 256
         resp = h.handle(req, s)
         assert len(resp) == 4
 
     def test_write_stored_in_datastore(self):
         h = Service77Handler()
         s = make_store()
-        req = bytes([0x77, 0x01, 0x00, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x12, 0x34])   # DID 256 ← [0x12, 0x34], 6 bytes padding
+        # DID 256 (0x0100): CTR=01 00, ClientID=43 01 82, DID_LE=00 01, len=B2, data=12 34
+        req = bytes([0x77, 0x01, 0x00, 0x43, 0x01, 0x82, 0x00, 0x01, 0xB2, 0x12, 0x34])
         h.handle(req, s)
         assert s.read(256) == bytes([0x12, 0x34])
 
     def test_unknown_did_returns_nrc_request_out_of_range(self):
         h = Service77Handler()
         s = make_store()
-        req = bytes([0x77, 0x09, 0x99, 0x42])   # DID 0x0999 not in store
+        # DID 0x0999 = 2457, not in store; CTR=09 99, DID_LE=99 09, len=B1, data=42
+        req = bytes([0x77, 0x09, 0x99, 0x43, 0x01, 0x82, 0x99, 0x09, 0xB1, 0x42])
         resp = h.handle(req, s)
         assert resp[0] == SID_NEGATIVE_RESP
         assert resp[1] == SID_SERVICE77
@@ -110,7 +111,7 @@ class TestService77Handler:
     def test_too_short_returns_nrc_subfunction(self):
         h = Service77Handler()
         s = make_store()
-        req = bytes([0x77, 0x01, 0x00])   # missing data byte
+        req = bytes([0x77, 0x01, 0x00, 0x43, 0x01, 0x82, 0x00, 0x01])   # 8 bytes, missing LenCode
         resp = h.handle(req, s)
         assert resp[0] == SID_NEGATIVE_RESP
         assert resp[2] == NRC_SUBFUNCTION_NOT_SUPPORTED
@@ -120,18 +121,33 @@ class TestService77Handler:
         s = make_store()
         assert h.handle(b"", s) is None
 
-    def test_wrong_service_id_returns_nrc(self):
+    def test_wrong_service_id_returns_none(self):
+        """Happens during a UDS device scan: confirmed against a real Viessmann
+        device that it sends no response at all in this case (client times out)."""
         h = Service77Handler()
         s = make_store()
         req = bytes([0x2E, 0x01, 0x00, 0x42])   # UDS write – wrong service
         resp = h.handle(req, s)
-        assert resp[0] == SID_NEGATIVE_RESP
+        assert resp is None
+
+    def test_write_without_length_code(self):
+        """Byte 8 with high nibble < 0x8 is the first data byte, not a length code."""
+        h = Service77Handler()
+        s = make_store()
+        # DID 700 (0x02BC): CTR=02 BC, ClientID=43 01 82, DID_LE=BC 02, data=0x2B (no len code)
+        # 0x2B has high nibble 2 < 8 → byte 8 is the data byte itself
+        req = bytes([0x77, 0x02, 0xBC, 0x43, 0x01, 0x82, 0xBC, 0x02, 0x2B])
+        resp = h.handle(req, s)
+        assert resp[0] == SID_SERVICE77
+        assert resp[3] == S77_CONFIRM_BYTE
+        assert s.read(700) == bytes([0x2B])
 
     def test_writes_protected_did_without_restriction(self):
         """Service 77 ignores the protection list – it has no concept of it."""
         h = Service77Handler()
         s = make_store()
-        req = bytes([0x77, 0x01, 0x00, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xBE, 0xEF])   # DID 256 (protected in UDS), 6 bytes padding
+        # DID 256 (0x0100): CTR=01 00, ClientID=43 01 82, DID_LE=00 01, len=B2, data=BE EF
+        req = bytes([0x77, 0x01, 0x00, 0x43, 0x01, 0x82, 0x00, 0x01, 0xB2, 0xBE, 0xEF])
         resp = h.handle(req, s)
         # Service77Handler doesn't know about the protection list at all
         assert resp[0] == SID_SERVICE77
@@ -213,8 +229,8 @@ class TestSharedStore:
         s77 = Service77Handler()
         uds = UDSHandler(service77_dids=frozenset([256]))
 
-        # Write DID 256 via Service 77
-        s77.handle(bytes([0x77, 0x01, 0x00, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xDE, 0xAD]), store)   # DID 256 (protected in UDS), 6 bytes padding
+        # Write DID 256 via Service 77: CTR=01 00, ClientID=43 01 82, DID_LE=00 01, len=B2
+        s77.handle(bytes([0x77, 0x01, 0x00, 0x43, 0x01, 0x82, 0x00, 0x01, 0xB2, 0xDE, 0xAD]), store)
 
         # Read DID 256 via UDS – must return the new value
         resp = uds.handle(bytes([0x22, 0x01, 0x00]), store)
