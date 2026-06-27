@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.6.1 – Service 77 frame format correction**
+**v0.6.2 – Service 77 device-scan behaviour correction**
 
 | Feature | Status |
 |---|---|
@@ -610,6 +610,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### 0.6.2 (2026-06-27)
+* (MyHomeMyData) Service77Handler no longer sends a negative response for frames with an unexpected service ID; it now stays silent, matching the behaviour observed on a real Viessmann device. This is the expected case during a UDS device scan, where udsoncan probes other service IDs on the Service 77 CAN-ID; the previous NRC made udsoncan log a misleading warning, and the client now simply times out and continues, as on real hardware.
+
 ### 0.6.1 (2026-05-12)
 * (MyHomeMyData) Corrected Service 77 request frame format: DID is little-endian at bytes 6–7; bytes 1–2 carry the CTR field (e3oncan encodes the DID there). Updated tests and documentation accordingly.
 * (MyHomeMyData) Corrected Collect protocol documentation: only the low nibble of the length byte determines payload length; high nibble `0x8x` and `0xBx` are both valid on real hardware.

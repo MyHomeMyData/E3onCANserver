@@ -27,8 +27,8 @@ from simulator.protocol.uds import (
     SID_NEGATIVE_RESP,
     NRC_CONDITIONS_NOT_CORRECT,
     NRC_REQUEST_OUT_OF_RANGE,
-    NRC_SUBFUNCTION_NOT_SUPPORTED,
     NRC_SERVICE_NOT_SUPPORTED,
+    NRC_SUBFUNCTION_NOT_SUPPORTED,
 )
 
 
@@ -121,12 +121,14 @@ class TestService77Handler:
         s = make_store()
         assert h.handle(b"", s) is None
 
-    def test_wrong_service_id_returns_nrc(self):
+    def test_wrong_service_id_returns_none(self):
+        """Happens during a UDS device scan: confirmed against a real Viessmann
+        device that it sends no response at all in this case (client times out)."""
         h = Service77Handler()
         s = make_store()
         req = bytes([0x2E, 0x01, 0x00, 0x42])   # UDS write – wrong service
         resp = h.handle(req, s)
-        assert resp[0] == SID_NEGATIVE_RESP
+        assert resp is None
 
     def test_write_without_length_code(self):
         """Byte 8 with high nibble < 0x8 is the first data byte, not a length code."""

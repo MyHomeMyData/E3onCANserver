@@ -135,12 +135,16 @@ class Service77Handler(ProtocolHandler):
             return None
 
         if payload[0] != SID_SERVICE77:
-            # Should not happen – the bus callback only fires for S77 frames.
-            logger.warning(
-                "[Service77] unexpected service ID 0x%02X (expected 0x77)",
+            # Happens during a UDS device scan: udsoncan probes services on the
+            # Service 77 CAN-ID too, so the SID here is whatever it is probing
+            # (not 0x77). Confirmed against a real Viessmann device: it sends
+            # no response at all in this case (client times out and moves on).
+            logger.debug(
+                "[Service77] unexpected service ID 0x%02X (expected 0x77), "
+                "likely a UDS device scan probe – not responding",
                 payload[0],
             )
-            return _negative_response(payload[0], NRC_SUBFUNCTION_NOT_SUPPORTED)
+            return None
 
         if len(payload) < 9:  # SID(1) + CTR(2) + ClientID(3) + DID(2) + LenCode(1)
             logger.debug("[Service77] payload too short (%d bytes)", len(payload))
