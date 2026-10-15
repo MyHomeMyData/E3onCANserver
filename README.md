@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.6.2 – Service 77 device-scan behaviour correction**
+**v0.6.3 – CAN TX retry on transient send errors**
 
 | Feature | Status |
 |---|---|
@@ -610,6 +610,9 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### 0.6.3 (2026-10-15)
+* (MyHomeMyData) CAN TX: frames rejected by the kernel with a transient error (`ENOBUFS`/`EAGAIN`, TX queue of the interface full) are now retried with a short exponential backoff (up to 5 retries, 2–32 ms) instead of being dropped. This prevents truncated multi-frame messages (e.g. Collect broadcasts or ISO-TP responses) under high bus load on real CAN interfaces.
+
 ### 0.6.2 (2026-06-27)
 * (MyHomeMyData) Service77Handler no longer sends a negative response for frames with an unexpected service ID; it now stays silent, matching the behaviour observed on a real Viessmann device. This is the expected case during a UDS device scan, where udsoncan probes other service IDs on the Service 77 CAN-ID; the previous NRC made udsoncan log a misleading warning, and the client now simply times out and continues, as on real hardware.
 

@@ -29,6 +29,7 @@ Extension points (not yet implemented)
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import threading
 from typing import Callable, Dict, Optional
@@ -39,6 +40,23 @@ logger = logging.getLogger(__name__)
 
 # Type alias: a receive callback takes a can.Message and returns nothing.
 RxCallback = Callable[[can.Message], None]
+
+# Transient send errors: the kernel TX queue of the CAN interface is
+# momentarily full (e.g. during a multi-frame burst).  Such frames are
+# retried after a short backoff instead of being dropped.
+TX_RETRYABLE_ERRNOS = frozenset({errno.ENOBUFS, errno.EAGAIN})
+TX_RETRY_MAX = 5           # retries after the first failed attempt
+TX_RETRY_BACKOFF_S = 0.002  # initial backoff, doubled on every retry
+
+
+def _tx_errno(exc: can.CanError) -> Optional[int]:
+    """Return the OS errno behind *exc*, or ``None`` if unknown."""
+    if isinstance(exc.error_code, int):
+        return exc.error_code
+    cause = exc.__cause__
+    if isinstance(cause, OSError):
+        return cause.errno
+    return None
 
 
 class CANBus:
@@ -150,15 +168,45 @@ class CANBus:
         """Drain the TX queue and write frames to the bus."""
         while True:
             msg = await self._tx_queue.get()
+            await self._send_with_retry(msg)
+
+    async def _send_with_retry(self, msg: can.Message) -> None:
+        """
+        Write *msg* to the bus, retrying transient errors (``ENOBUFS``,
+        ``EAGAIN``) with exponential backoff.
+
+        The frame is dropped (and an error logged) only if the error is not
+        transient or the retries are exhausted.  Retrying here keeps the frame
+        order intact, since the TX loop does not pick up the next frame until
+        this one has been sent or dropped.
+        """
+        backoff = TX_RETRY_BACKOFF_S
+        for attempt in range(TX_RETRY_MAX + 1):
             try:
                 self._bus.send(msg)
+            except can.CanError as exc:
+                if _tx_errno(exc) not in TX_RETRYABLE_ERRNOS:
+                    logger.error("CAN TX error: %s", exc)
+                    return
+                if attempt == TX_RETRY_MAX:
+                    logger.error(
+                        "CAN TX error: %s – frame 0x%03X dropped after %d retries",
+                        exc, msg.arbitration_id, TX_RETRY_MAX,
+                    )
+                    return
+                logger.debug(
+                    "CAN TX busy (%s) – retry %d/%d in %.0f ms",
+                    exc, attempt + 1, TX_RETRY_MAX, backoff * 1000,
+                )
+                await asyncio.sleep(backoff)
+                backoff *= 2
+            else:
                 logger.debug(
                     "TX  0x%03X  %s",
                     msg.arbitration_id,
                     bytes(msg.data).hex(" "),
                 )
-            except can.CanError as exc:
-                logger.error("CAN TX error: %s", exc)
+                return
 
     # ------------------------------------------------------------------
     # RX (runs in a separate OS thread)
