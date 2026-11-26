@@ -16,6 +16,7 @@ The devices JSON file must follow this schema::
         "dpList": "../data/Open3Edatapoints_680.py",
         "prop": "HPMUMASTER",
         "service77": [ .. ],  // optional, list of dids rejected by standard writeDataByIdentifier protocol
+        "variableLengthDids": [[did, max_len], ..],  // optional, dids with variable data length
         "delay": 20,          // optional, ms, overrides --delay
         "errors": 10.0,       // optional, %, overrides --errors
         "cyclic": { ... }     // optional
@@ -28,6 +29,9 @@ tx        : CAN arbitration ID (hex string) on which the client sends requests.
 dpList    : Path to the datapoint list file (relative to the devices.json file).
 prop      : Device property string (informational).
 service77 : A write request targeting any of these DIDs via service 2E returns NRC 0x22 (conditionsNotCorrect)
+variableLengthDids : List of [DID, max_len] pairs. Writes to these DIDs may
+            have any length from 1 to max_len. All other DIDs accept writes of
+            exactly their stored length only (else NRC 0x13).
 delay     : Inter-frame delay in ms for this device (0–200). Overrides --delay.
 errors    : Error injection rate in % for this device (0–20). Overrides --errors.
 
@@ -56,7 +60,7 @@ import json
 import logging
 import signal
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from simulator.bus import CANBus
 from simulator.cyclic import CyclicMessage, CyclicTask
@@ -67,7 +71,7 @@ from simulator.protocol.encoders import Encoder
 from simulator.protocol.uds import UDSHandler
 from simulator.doip import DoIPServer, DEFAULT_HOST, DEFAULT_PORT
 
-pgm_ver_str = 'V0.6.0 (2026-04-23)'
+pgm_ver_str = 'V0.7.0 (2026-11-26)'
 
 
 def parse_args() -> argparse.Namespace:
@@ -130,6 +134,42 @@ def parse_args() -> argparse.Namespace:
         help="Logging verbosity",
     )
     return parser.parse_args()
+
+
+def parse_variable_length_dids(device_name: str, raw: list) -> Dict[int, int]:
+    """
+    Parse the ``"variableLengthDids"`` entry of a device: a list of
+    ``[DID, max_len]`` pairs with integer values and ``max_len >= 1``.
+
+    Returns a mapping DID → max_len.
+
+    Raises
+    ------
+    ValueError
+        If an entry is malformed.
+    """
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"[{device_name}] variableLengthDids must be a list of [DID, max_len]"
+        )
+    result: Dict[int, int] = {}
+    for item in raw:
+        if (
+            not isinstance(item, list) or len(item) != 2
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in item)
+        ):
+            raise ValueError(
+                f"[{device_name}] variableLengthDids: invalid entry {item!r},"
+                " expected [DID, max_len]"
+            )
+        did, max_len = item
+        if max_len < 1:
+            raise ValueError(
+                f"[{device_name}] variableLengthDids: max_len of DID {did}"
+                f" must be >= 1, got {max_len}"
+            )
+        result[did] = max_len
+    return result
 
 
 def _build_cyclic_task(
@@ -236,6 +276,16 @@ def load_devices(
                 name, sorted(service77_dids),
             )
 
+        # Variable-length DIDs (e.g. heating circuit names on a Vitodens).
+        variable_length_dids = parse_variable_length_dids(
+            name, entry.get("variableLengthDids", [])
+        )
+        if variable_length_dids:
+            logging.debug(
+                "[%s] variable-length DIDs (DID: max_len): %s",
+                name, dict(sorted(variable_length_dids.items())),
+            )
+
         # Extension point: read entry.get("protocol", "uds") here and
         # select the appropriate ProtocolHandler class.
         protocol_class = UDSHandler
@@ -251,6 +301,7 @@ def load_devices(
             cyclic_task=None,
             fault_config=fault_config,
             service77_dids=service77_dids,
+            variable_length_dids=variable_length_dids,
         )
 
         # Attach cyclic task if configured.
@@ -270,11 +321,11 @@ def load_devices(
         devices.append(device)
         logging.info(
             "Loaded device %r (tx=0x%03X, delay=%dms, errors=%.1f%%,"
-            " cyclic=%s, s77_protected=%d DID(s))",
+            " cyclic=%s, s77_protected=%d DID(s), variable_length=%d DID(s))",
             name, tx_id,
             fault_config.delay_ms, fault_config.error_pct,
             "yes" if device._cyclic_task else "no",
-            len(service77_dids),
+            len(service77_dids), len(variable_length_dids),
         )
 
     return devices

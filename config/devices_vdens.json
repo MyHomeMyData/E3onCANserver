@@ -1,0 +1,11 @@
+{
+  "vdens": {
+    "tx": "0x680",
+    "dpList": "../data/Open3Edatapoints_vdens_680.py",
+    "prop": "HMUMASTER",
+    "variableLengthDids": [
+      [627, 40], [628, 40], [629, 40], [630, 40],
+      [631, 12], [632, 12], [633, 12], [634, 12]
+    ]
+  }
+}

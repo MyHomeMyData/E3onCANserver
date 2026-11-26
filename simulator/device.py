@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import FrozenSet, Optional, Type
+from typing import FrozenSet, Mapping, Optional, Type
 
 import can
 
@@ -75,6 +75,12 @@ class SimulatedDevice:
         Set of DID integers protected against normal WriteDataByIdentifier.
         Writes to these DIDs via UDS return NRC 0x22; Service 77 always
         accepts them.  Empty set (default) means no protection.
+    variable_length_dids :
+        Mapping DID → max_len for DIDs whose value length may change on
+        WriteDataByIdentifier (1 up to max_len).  All other DIDs only accept
+        writes of exactly their stored length.  DIDs not present in the
+        values file, or whose stored value is longer than max_len, are
+        logged as a warning.
     """
 
     def __init__(
@@ -88,6 +94,7 @@ class SimulatedDevice:
         cyclic_task: Optional[CyclicTask] = None,
         fault_config: Optional[FaultConfig] = None,
         service77_dids: Optional[FrozenSet[int]] = None,
+        variable_length_dids: Optional[Mapping[int, int]] = None,
     ) -> None:
         self.name    = name
         self.tx_id   = tx_id
@@ -102,7 +109,24 @@ class SimulatedDevice:
 
         # UDS handler receives the protection list so it can enforce NRC 0x22.
         s77_set = service77_dids or frozenset()
-        self._uds_handler  = UDSHandler(service77_dids=s77_set)
+        var_len = dict(variable_length_dids or {})
+        unknown = sorted(d for d in var_len if self._store.stored_length(d) is None)
+        if unknown:
+            logger.warning(
+                "[%s] variableLengthDids not found in %s: %s",
+                name, dp_values_path, unknown,
+            )
+        for did, max_len in sorted(var_len.items()):
+            stored = self._store.stored_length(did)
+            if stored is not None and stored > max_len:
+                logger.warning(
+                    "[%s] variableLengthDids: stored value of DID %d has %d"
+                    " bytes, more than max_len %d",
+                    name, did, stored, max_len,
+                )
+        self._uds_handler  = UDSHandler(
+            service77_dids=s77_set, variable_length_dids=var_len,
+        )
         self._s77_handler  = Service77Handler()
 
         # Each worker has its own ISO-TP assembler (independent state).

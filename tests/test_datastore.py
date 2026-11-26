@@ -133,3 +133,11 @@ def test_zero_length_dids(zero_length_file):
 def test_known_dids_sorted(sample_file):
     store = DatapointStore.from_file(sample_file)
     assert store.known_dids() == [256, 700, 1234]
+
+
+def test_stored_length(sample_file):
+    store = DatapointStore.from_file(sample_file)
+    assert store.stored_length(1234) == 3
+    store.write(1234, b"\x01")
+    assert store.stored_length(1234) == 1
+    assert store.stored_length(9999) is None

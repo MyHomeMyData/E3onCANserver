@@ -12,7 +12,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 
 ## Status
 
-**v0.6.3 – CAN TX retry on transient send errors**
+**v0.7.0 – DIDs with variable data length**
 
 | Feature | Status |
 |---|---|
@@ -27,6 +27,7 @@ Alternatively, the DoIP (Diagnostics over IP, ISO 13400) protocol can be used ov
 | Inter-frame delay | ✅ |
 | Fault injection for robustness testing | ✅ |
 | Viessmann Service 77 write protocol | ✅ |
+| DIDs with variable data length | ✅ |
 | DoIP (ISO 13400) server | ✅ |
 | Docker files | ✅ |
 
@@ -111,10 +112,49 @@ Pass the path via `--devices`.  Full example (`config/devices.json`):
 | `delay` | Inter-frame delay in ms for UDS responses (0–200, optional). Overrides `--delay`. |
 | `errors` | Fault injection rate in % for UDS responses (0.0–20.0, optional). Overrides `--errors`. |
 | `service77` | List of DID integers protected against normal WriteDataByIdentifier (optional). These DIDs can only be written via Service 77. |
+| `variableLengthDids` | List of `[DID, max_len]` pairs for DIDs whose data length may change on WriteDataByIdentifier (optional, see [Variable data length](#variable-data-length)). |
 | `cyclic` | Specification of unsolicited, cyclically sent messages (optional) |
 | `energy_meter` | Optional section. Each entry sends a fixed raw CAN frame at a fixed interval (see below). |
 
 The simulator responds on `tx + 0x10` (e.g. requests on `0x680` → responses on `0x690`).
+
+### Variable data length
+
+Real devices return text datapoints (codec `O3EUtf8`) in two ways:
+
+| Behaviour | Device (observed) | Example DID 627 |
+|---|---|---|
+| Fixed length | Vitocal (heat pump) | Always 40 bytes: name padded with `00`. "HK1" → `484b3100…00` (40 bytes), also after renaming. |
+| Variable length | Vitodens | Name plus exactly one `00`. "HK1" → `484b3100` (4 bytes), "HK11" → `484b313100` (5 bytes). |
+
+By default every DID has a **fixed length**: a WriteDataByIdentifier (0x2E) is accepted only with exactly the stored length, any other length is answered with NRC `0x13` (incorrectMessageLengthOrInvalidFormat).
+
+DIDs listed under `variableLengthDids` have a **variable length**. Each entry is a pair `[DID, max_len]`: a write of any length from 1 up to `max_len` is accepted. The value is stored with exactly the written length, and subsequent reads return it with that length. A longer write is answered with NRC `0x13` and the value stays unchanged. The entry in the values file may be shorter than `max_len`. The list applies per DID, independent of the codec.
+
+```json
+"vdens": {
+  "tx": "0x680",
+  "dpList": "../data/Open3Edatapoints_vdens_680.py",
+  "prop": "HMUMASTER",
+  "variableLengthDids": [
+    [627, 40], [628, 40], [629, 40], [630, 40],
+    [631, 12], [632, 12], [633, 12], [634, 12]
+  ]
+}
+```
+
+The `max_len` values above are the codec lengths from `Open3Edatapoints.py` (`O3EUtf8(40)` for 627–630, `O3EUtf8(12)` for 631–634).
+
+A ready-made example is `config/devices_vdens.json` with values in `data/virtdata_vdens_680.txt` (627 = "HK1", 4 bytes; 628 = "Heizkreis 2", 12 bytes).
+
+* A malformed entry (not a `[DID, max_len]` pair of integers, or `max_len` < 1) stops the simulator at startup with an error.
+* A DID that is missing in the values file, or whose stored value is longer than `max_len`, is logged as a warning.
+
+Notes:
+* The Service 77 protection list (NRC `0x22`) takes precedence over the length check.
+* Service 77 writes are not length-checked.
+* Changed values are kept in memory only and are lost when the simulator restarts.
+* It is not verified that real devices answer an invalid write length with NRC `0x13`; the simulator assumes it.
 
 ### Datapoint list file (Python)
 
@@ -610,6 +650,12 @@ store.register_resolver(0x0200, lambda: struct.pack(">I", int(time.time())))
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### 0.7.0 (2026-11-26)
+* (MyHomeMyData) Added `variableLengthDids` device option: list of `[DID, max_len]` pairs for DIDs whose data length may change on WriteDataByIdentifier (1 up to `max_len`), as observed for heating circuit names (DID 627–634) on a Vitodens. Added example config `config/devices_vdens.json`.
+* (MyHomeMyData) **Behaviour change:** WriteDataByIdentifier (0x2E) now checks the data length. Fixed-length DIDs (all DIDs not listed in `variableLengthDids`) accept only exactly the stored length; any other length returns NRC `0x13` (incorrectMessageLengthOrInvalidFormat). Previously writes of any length were accepted and stored. Service 77 writes are unchanged.
+* (MyHomeMyData) Added DID 627 (heating circuit name, fixed length 40 bytes) to `data/virtdata_680.txt`.
+* (MyHomeMyData) Program version shown by `--help` updated (was still 0.6.0).
+
 ### 0.6.3 (2026-10-15)
 * (MyHomeMyData) CAN TX: frames rejected by the kernel with a transient error (`ENOBUFS`/`EAGAIN`, TX queue of the interface full) are now retried with a short exponential backoff (up to 5 retries, 2–32 ms) instead of being dropped. This prevents truncated multi-frame messages (e.g. Collect broadcasts or ISO-TP responses) under high bus load on real CAN interfaces.
 
