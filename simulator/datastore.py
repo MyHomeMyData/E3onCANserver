@@ -179,6 +179,14 @@ class DatapointStore:
         """
         self._resolvers[did] = fn
 
+    def stored_length(self, did: int) -> Optional[int]:
+        """
+        Return the length of the currently stored (static) value of *did*,
+        or ``None`` if the DID is unknown.
+        """
+        value = self._data.get(did)
+        return None if value is None else len(value)
+
     def known_dids(self) -> list[int]:
         """Return a sorted list of all statically known DIDs."""
         return sorted(self._data.keys())

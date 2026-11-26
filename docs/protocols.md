@@ -168,9 +168,21 @@ Example:
 |---|---|---|
 | serviceNotSupported | `0x11` | Service 0x2E not supported by this ECU |
 | subFunctionNotSupported | `0x12` | Request too short or malformed |
+| incorrectMessageLengthOrInvalidFormat | `0x13` | Data length not accepted for this DID (see below) |
 | conditionsNotCorrect | `0x22` | DID is write-protected (see Service 77) |
 | requestOutOfRange | `0x31` | DID is unknown to this ECU |
 | securityAccessDenied | `0x33` | Write requires prior security access |
+
+### Data length
+
+Viessmann devices handle text datapoints (codec `O3EUtf8`, e.g. heating circuit names DID 627–634) in two ways:
+
+* **Fixed length** (observed on Vitocal): the value always has the same length and is padded with `00`, e.g. 40 bytes for DID 627 regardless of the name.
+* **Variable length** (observed on Vitodens): the value is the text plus exactly one `00`, e.g. `48 4B 31 00` for "HK1". The length changes when the name is changed.
+
+The simulator accepts a write on a fixed-length DID only with exactly the stored length. On a variable-length DID (`variableLengthDids` in the devices file, entries `[DID, max_len]`) any length from 1 up to `max_len` is accepted and stored as written. Any other length is answered with NRC `0x13`. It is not verified that real devices send `0x13` in this case; the simulator assumes it.
+
+The checks are applied in this order: request too short (`0x12`), protected DID (`0x22`), unknown DID (`0x31`), data length (`0x13`).
 
 ---
 

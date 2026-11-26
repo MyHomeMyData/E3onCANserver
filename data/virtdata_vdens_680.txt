@@ -1,0 +1,25 @@
+# Datapoint values for a Vitodens-like device (HMUMASTER, CAN TX-ID 0x680)
+# Format: <decimal-DID> <HEX bytes...>
+# Heating circuit names 627-634 have variable length (text + one 00),
+# see "variableLengthDids" in config/devices_vdens.json.
+
+# Busidentification
+256 3b0206004700fd01c30801000300f9013001020030303030303030303030303030383135
+
+# DID 268 (0x010C) – example: flow temperature
+268 8c01c1007a027e0100
+
+# Date and time
+505 120b17
+506 12061e
+
+# Heating circuit names (O3EUtf8, variable length)
+# 627: "HK1", 628: "Heizkreis 2", 629-634: "HK3" .. "HK8"
+627 484b3100
+628 4865697a6b72656973203200
+629 484b3300
+630 484b3400
+631 484b3500
+632 484b3600
+633 484b3700
+634 484b3800
